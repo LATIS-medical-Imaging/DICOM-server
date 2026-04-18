@@ -70,12 +70,12 @@ class Study(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=StudyStatus.PROCESSING)
 
-    owner: Mapped["User"] = relationship(back_populates="studies")
-    patient: Mapped["Patient"] = relationship(back_populates="studies")
-    series: Mapped[list["Series"]] = relationship(
+    owner: Mapped[User] = relationship(back_populates="studies")
+    patient: Mapped[Patient] = relationship(back_populates="studies")
+    series: Mapped[list[Series]] = relationship(
         back_populates="study", cascade="all, delete-orphan"
     )
-    shares: Mapped[list["Share"]] = relationship(
+    shares: Mapped[list[Share]] = relationship(
         back_populates="study",
         cascade="all, delete-orphan",
         foreign_keys="Share.study_id",

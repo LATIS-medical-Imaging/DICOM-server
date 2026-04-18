@@ -16,14 +16,14 @@ from app.db.models.user import User
 from app.db.models.user_session import UserSession
 
 __all__ = [
+    "Annotation",
+    "AuditLog",
+    "Instance",
+    "Patient",
+    "Series",
+    "Share",
+    "Study",
+    "UploadJob",
     "User",
     "UserSession",
-    "Patient",
-    "Study",
-    "Series",
-    "Instance",
-    "Annotation",
-    "Share",
-    "UploadJob",
-    "AuditLog",
 ]

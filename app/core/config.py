@@ -7,7 +7,7 @@ unchanged across development, staging, and production.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
@@ -15,7 +15,7 @@ from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
@@ -151,7 +151,7 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return the cached :class:`Settings` instance."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
 
 
 SettingsDep = Annotated[Settings, "settings"]

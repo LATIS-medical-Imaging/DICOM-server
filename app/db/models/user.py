@@ -25,9 +25,7 @@ class UserRole:
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "users"
-    __table_args__ = (
-        CheckConstraint("role IN ('admin', 'doctor')", name="ck_users_role"),
-    )
+    __table_args__ = (CheckConstraint("role IN ('admin', 'doctor')", name="ck_users_role"),)
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -47,13 +45,13 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    sessions: Mapped[list["UserSession"]] = relationship(
+    sessions: Mapped[list[UserSession]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    patients: Mapped[list["Patient"]] = relationship(back_populates="creator")
-    studies: Mapped[list["Study"]] = relationship(back_populates="owner")
-    annotations: Mapped[list["Annotation"]] = relationship(back_populates="user")
-    upload_jobs: Mapped[list["UploadJob"]] = relationship(
+    patients: Mapped[list[Patient]] = relationship(back_populates="creator")
+    studies: Mapped[list[Study]] = relationship(back_populates="owner")
+    annotations: Mapped[list[Annotation]] = relationship(back_populates="user")
+    upload_jobs: Mapped[list[UploadJob]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 

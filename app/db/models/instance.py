@@ -49,10 +49,10 @@ class Instance(Base, UUIDPrimaryKeyMixin):
     pixel_representation: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     number_of_frames: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
 
-    window_center: Mapped["Decimal | None"] = mapped_column(Numeric(12, 4), nullable=True)
-    window_width: Mapped["Decimal | None"] = mapped_column(Numeric(12, 4), nullable=True)
-    rescale_intercept: Mapped["Decimal | None"] = mapped_column(Numeric(12, 4), nullable=True)
-    rescale_slope: Mapped["Decimal | None"] = mapped_column(Numeric(12, 4), nullable=True)
+    window_center: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    window_width: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    rescale_intercept: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    rescale_slope: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
 
     image_position_patient: Mapped[str | None] = mapped_column(String(200), nullable=True)
     image_orientation_patient: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -69,11 +69,11 @@ class Instance(Base, UUIDPrimaryKeyMixin):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    series: Mapped["Series"] = relationship(back_populates="instances")
-    annotations: Mapped[list["Annotation"]] = relationship(
+    series: Mapped[Series] = relationship(back_populates="instances")
+    annotations: Mapped[list[Annotation]] = relationship(
         back_populates="instance", cascade="all, delete-orphan"
     )
-    shares: Mapped[list["Share"]] = relationship(
+    shares: Mapped[list[Share]] = relationship(
         back_populates="instance",
         cascade="all, delete-orphan",
         foreign_keys="Share.instance_id",

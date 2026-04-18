@@ -36,20 +36,22 @@ async def readiness(db: DBSession, settings: SettingsDep) -> ReadinessResponse:
     try:
         await db.execute(text("SELECT 1"))
         checks.append(DependencyCheck(name="postgres", healthy=True))
-    except Exception as exc:  # noqa: BLE001 — intentional catch-all for probe
+    except Exception as exc:
         checks.append(DependencyCheck(name="postgres", healthy=False, detail=str(exc)))
 
     # --- Redis ---
     try:
         import redis.asyncio as aioredis
 
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        client = aioredis.from_url(  # type: ignore[no-untyped-call]
+            settings.redis_url, decode_responses=True
+        )
         try:
             await client.ping()
             checks.append(DependencyCheck(name="redis", healthy=True))
         finally:
             await client.aclose()
-    except Exception as exc:  
+    except Exception as exc:
         checks.append(DependencyCheck(name="redis", healthy=False, detail=str(exc)))
 
     # --- MinIO ---
@@ -57,7 +59,7 @@ async def readiness(db: DBSession, settings: SettingsDep) -> ReadinessResponse:
         storage = StorageService(settings)
         storage.client.list_buckets()
         checks.append(DependencyCheck(name="minio", healthy=True))
-    except Exception as exc: 
+    except Exception as exc:
         checks.append(DependencyCheck(name="minio", healthy=False, detail=str(exc)))
 
     overall = "ok" if all(c.healthy for c in checks) else "degraded"

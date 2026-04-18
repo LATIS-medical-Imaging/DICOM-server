@@ -6,7 +6,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, ForeignKey, Numeric, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
@@ -40,16 +41,16 @@ class Annotation(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
         JSONB, nullable=False, server_default="{}"
     )
 
-    measurement_value: Mapped["Decimal | None"] = mapped_column(Numeric(15, 6), nullable=True)
+    measurement_value: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
     measurement_unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    measurement_area: Mapped["Decimal | None"] = mapped_column(Numeric(15, 6), nullable=True)
-    measurement_mean: Mapped["Decimal | None"] = mapped_column(Numeric(15, 6), nullable=True)
-    measurement_stddev: Mapped["Decimal | None"] = mapped_column(Numeric(15, 6), nullable=True)
+    measurement_area: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
+    measurement_mean: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
+    measurement_stddev: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
 
     label: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
 
-    instance: Mapped["Instance"] = relationship(back_populates="annotations")
-    user: Mapped["User"] = relationship(back_populates="annotations")
+    instance: Mapped[Instance] = relationship(back_populates="annotations")
+    user: Mapped[User] = relationship(back_populates="annotations")

@@ -26,6 +26,13 @@ COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip setuptools wheel \
     && pip install "."
 
+# --- Dev stage: builder + dev extras (ruff, black, mypy, pytest). ----------
+# Used by `docker compose run --rm tools ...` for local lint/type/test runs.
+FROM builder AS dev
+RUN pip install ".[dev]"
+WORKDIR /app
+CMD ["bash"]
+
 FROM python:${PYTHON_VERSION} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

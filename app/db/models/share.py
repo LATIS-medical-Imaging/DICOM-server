@@ -75,7 +75,9 @@ class Share(Base, UUIDPrimaryKeyMixin):
         nullable=True,
     )
 
-    permission: Mapped[str] = mapped_column(String(20), nullable=False, default=SharePermission.VIEW)
+    permission: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=SharePermission.VIEW
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=ShareStatus.ACTIVE)
@@ -85,8 +87,8 @@ class Share(Base, UUIDPrimaryKeyMixin):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    study: Mapped["Study | None"] = relationship(back_populates="shares", foreign_keys=[study_id])
-    series: Mapped["Series | None"] = relationship(back_populates="shares", foreign_keys=[series_id])
-    instance: Mapped["Instance | None"] = relationship(
+    study: Mapped[Study | None] = relationship(back_populates="shares", foreign_keys=[study_id])
+    series: Mapped[Series | None] = relationship(back_populates="shares", foreign_keys=[series_id])
+    instance: Mapped[Instance | None] = relationship(
         back_populates="shares", foreign_keys=[instance_id]
     )

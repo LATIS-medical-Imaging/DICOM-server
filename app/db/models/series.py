@@ -36,19 +36,19 @@ class Series(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     patient_position: Mapped[str | None] = mapped_column(String(16), nullable=True)
     protocol_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
-    slice_thickness: Mapped["Decimal | None"] = mapped_column(Numeric(10, 4), nullable=True)
-    spacing_between_slices: Mapped["Decimal | None"] = mapped_column(Numeric(10, 4), nullable=True)
+    slice_thickness: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    spacing_between_slices: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     pixel_spacing: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     instance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    study: Mapped["Study"] = relationship(back_populates="series")
-    instances: Mapped[list["Instance"]] = relationship(
+    study: Mapped[Study] = relationship(back_populates="series")
+    instances: Mapped[list[Instance]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
-    shares: Mapped[list["Share"]] = relationship(
+    shares: Mapped[list[Share]] = relationship(
         back_populates="series",
         cascade="all, delete-orphan",
         foreign_keys="Share.series_id",

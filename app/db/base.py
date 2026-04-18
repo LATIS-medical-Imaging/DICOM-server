@@ -43,9 +43,7 @@ class TimestampMixin:
 class SoftDeleteMixin:
     """``deleted_at`` column for soft-deletable entities."""
 
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-__all__ = ["Base", "UUIDPrimaryKeyMixin", "TimestampMixin", "SoftDeleteMixin"]
+__all__ = ["Base", "SoftDeleteMixin", "TimestampMixin", "UUIDPrimaryKeyMixin"]

@@ -92,6 +92,21 @@ strict = true
 plugins = ["pydantic.mypy"]
 exclude = ["alembic/versions"]
 
+# Third-party libraries without type stubs.
+[[tool.mypy.overrides]]
+module = ["celery", "celery.*"]
+ignore_missing_imports = true
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["redis.*", "minio.*"]
+ignore_missing_imports = true
+
+# Code that *uses* untyped third-party decorators (e.g. @celery_app.task).
+[[tool.mypy.overrides]]
+module = ["app.workers.*"]
+disallow_untyped_decorators = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

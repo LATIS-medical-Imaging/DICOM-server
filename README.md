@@ -163,3 +163,16 @@ cp .env.example .env
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
+
+---
+
+## Development Workflow
+
+Every check runs **inside Docker** — no local Python install required. The first
+run builds the tools image (~1 min); subsequent runs are fast.
+
+```bash
+make build-tools   # one-time (rerun after pyproject.toml changes)
+make ci            # mirrors GitHub CI: lint + format + types + tests
+make fix           # auto-repair lint + formatting issues
+```

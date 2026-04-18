@@ -19,9 +19,7 @@ if TYPE_CHECKING:
 
 class Patient(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "patients"
-    __table_args__ = (
-        CheckConstraint("sex IN ('M', 'F', 'O')", name="ck_patients_sex"),
-    )
+    __table_args__ = (CheckConstraint("sex IN ('M', 'F', 'O')", name="ck_patients_sex"),)
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -34,5 +32,5 @@ class Patient(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     birth_date: Mapped[date] = mapped_column(Date, nullable=False)
     sex: Mapped[str] = mapped_column(String(1), nullable=False)
 
-    creator: Mapped["User"] = relationship(back_populates="patients")
-    studies: Mapped[list["Study"]] = relationship(back_populates="patient")
+    creator: Mapped[User] = relationship(back_populates="patients")
+    studies: Mapped[list[Study]] = relationship(back_populates="patient")

@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import INET, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base

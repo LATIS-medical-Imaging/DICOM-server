@@ -7,7 +7,7 @@ so routes/services never import ``minio`` directly.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import IO
+from typing import BinaryIO
 
 from minio import Minio
 from minio.error import S3Error
@@ -67,7 +67,7 @@ class StorageService:
         self,
         bucket: str,
         key: str,
-        data: IO[bytes],
+        data: BinaryIO,
         length: int,
         content_type: str = "application/dicom",
     ) -> None:
