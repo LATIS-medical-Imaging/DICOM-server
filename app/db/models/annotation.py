@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, ForeignKey, Numeric, String
@@ -13,8 +14,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from decimal import Decimal
-
     from app.db.models.instance import Instance
     from app.db.models.user import User
 
