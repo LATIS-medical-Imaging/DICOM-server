@@ -78,15 +78,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-
     env:
       APP_ENV: development
       JWT_SECRET_KEY: ci-only-secret-please-change-in-prod-0123456789abcdef
