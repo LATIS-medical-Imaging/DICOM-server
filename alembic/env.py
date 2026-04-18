@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.db.base import Base
 
 # Registers all models on Base.metadata.
-import app.db.models  # noqa: F401
+import app.db.models  
 
 config = context.config
 

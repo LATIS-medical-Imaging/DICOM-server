@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Ensure object storage buckets exist — fail fast if MinIO is unreachable.
     try:
         StorageService(settings).ensure_buckets()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  
         logger.warning("storage_init_failed", error=str(exc))
 
     try:

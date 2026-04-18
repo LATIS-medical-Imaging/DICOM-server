@@ -49,7 +49,7 @@ async def readiness(db: DBSession, settings: SettingsDep) -> ReadinessResponse:
             checks.append(DependencyCheck(name="redis", healthy=True))
         finally:
             await client.aclose()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  
         checks.append(DependencyCheck(name="redis", healthy=False, detail=str(exc)))
 
     # --- MinIO ---
@@ -57,7 +57,7 @@ async def readiness(db: DBSession, settings: SettingsDep) -> ReadinessResponse:
         storage = StorageService(settings)
         storage.client.list_buckets()
         checks.append(DependencyCheck(name="minio", healthy=True))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc: 
         checks.append(DependencyCheck(name="minio", healthy=False, detail=str(exc)))
 
     overall = "ok" if all(c.healthy for c in checks) else "degraded"

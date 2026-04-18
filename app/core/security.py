@@ -38,8 +38,8 @@ class PasswordHasherService:
 
 
 class TokenType:
-    ACCESS = "access"  # noqa: S105
-    REFRESH = "refresh"  # noqa: S105
+    ACCESS = "access"  
+    REFRESH = "refresh" 
 
 
 def _encode(payload: dict[str, Any], settings: Settings) -> str:
