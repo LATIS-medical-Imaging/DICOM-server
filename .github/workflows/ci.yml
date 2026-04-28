@@ -17,7 +17,6 @@ env:
   PIP_NO_PYTHON_VERSION_WARNING: "1"
 
 jobs:
-  # Static analysis: format, lint, type-check
   lint:
     name: Lint & type-check
     runs-on: ubuntu-latest
@@ -46,7 +45,6 @@ jobs:
       - name: Mypy (type check)
         run: mypy app
 
-  # Tests with real Postgres + Redis + MinIO services
   test:
     name: Tests (pytest)
     runs-on: ubuntu-latest
@@ -123,7 +121,6 @@ jobs:
           path: coverage.xml
           if-no-files-found: ignore
 
-  # Build (and optionally push) the Docker image
   docker:
     name: Build Docker image
     runs-on: ubuntu-latest
@@ -170,7 +167,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Security: dependency audit + container scan
   security:
     name: Security scan
     runs-on: ubuntu-latest
