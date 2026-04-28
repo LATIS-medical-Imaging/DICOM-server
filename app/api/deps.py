@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.services.storage_service import StorageService
 
 
-def get_storage(settings: Settings = Depends(get_settings)) -> StorageService:
+def get_storage(settings: Annotated[Settings, Depends(get_settings)]) -> StorageService:
     return StorageService(settings)
 
 
