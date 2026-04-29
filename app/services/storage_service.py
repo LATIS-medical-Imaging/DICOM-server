@@ -1,11 +1,6 @@
-"""Thin wrapper around the MinIO Python client.
-
-Centralizes bucket naming, object key layout, and pre-signed URL generation
-so routes/services never import ``minio`` directly.
-"""
-
 from __future__ import annotations
 
+import urllib.parse
 from datetime import timedelta
 from typing import BinaryIO
 
@@ -57,11 +52,45 @@ class StorageService:
         series_uid: str,
         sop_uid: str,
     ) -> str:
-        """``{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm`` — matches the architecture."""
+        """`{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm` — matches the architecture."""
         return f"{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm"
 
     # ------------------------------------------------------------------
-    # Uploads / downloads
+    # Internal → external URL rewrite
+    # ------------------------------------------------------------------
+    def _to_external_url(self, internal_url: str) -> str:
+        """Replace the internal Docker hostname with the externally reachable endpoint.
+
+        MinIO generates presigned URLs using the client's configured endpoint
+        (e.g. ``minio:9000``). The browser can't reach that hostname, so we
+        swap in ``minio_external_endpoint`` (e.g. ``http://localhost:9000``).
+        """
+        parsed = urllib.parse.urlparse(internal_url)
+        external = urllib.parse.urlparse(self._settings.minio_external_endpoint)
+        rewritten = parsed._replace(scheme=external.scheme, netloc=external.netloc)
+        return urllib.parse.urlunparse(rewritten)
+
+    # ------------------------------------------------------------------
+    # Pre-signed URLs (browser ↔ MinIO direct I/O)
+    # ------------------------------------------------------------------
+    def presigned_put_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
+        """Return a presigned PUT URL the client can use to upload directly to MinIO."""
+        expires = timedelta(
+            seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
+        )
+        url = self.client.presigned_put_object(bucket, key, expires=expires)
+        return self._to_external_url(url)
+
+    def presigned_get_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
+        """Return a presigned GET URL the client can use to download directly from MinIO."""
+        expires = timedelta(
+            seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
+        )
+        url = self.client.presigned_get_object(bucket, key, expires=expires)
+        return self._to_external_url(url)
+
+    # ------------------------------------------------------------------
+    # Direct object I/O (server-side, e.g. Celery workers)
     # ------------------------------------------------------------------
     def put_object(
         self,
@@ -73,17 +102,13 @@ class StorageService:
     ) -> None:
         self.client.put_object(bucket, key, data, length, content_type=content_type)
 
-    def presigned_put_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
-        expires = timedelta(
-            seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
-        )
-        return self.client.presigned_put_object(bucket, key, expires=expires)
-
-    def presigned_get_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
-        expires = timedelta(
-            seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
-        )
-        return self.client.presigned_get_object(bucket, key, expires=expires)
-
     def remove_object(self, bucket: str, key: str) -> None:
         self.client.remove_object(bucket, key)
+
+    def object_exists(self, bucket: str, key: str) -> bool:
+        """Return True if the object exists in the bucket."""
+        try:
+            self.client.stat_object(bucket, key)
+            return True
+        except S3Error:
+            return False
