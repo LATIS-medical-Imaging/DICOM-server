@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+
 # Upload
 class PresignedUploadRequest(BaseModel):
     """Body sent by the client to request a presigned PUT URL."""
@@ -25,6 +26,8 @@ class PresignedUploadResponse(BaseModel):
 
 
 # Download
+
+
 class PresignedDownloadResponse(BaseModel):
     """Returned to the viewer so it can GET the file directly from MinIO."""
 
