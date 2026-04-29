@@ -5,7 +5,7 @@ authentication, patient/study/series/instance management, DICOM file storage,
 annotations, sharing, and heavy image-processing jobs.
 
 It consumes the companion scientific library
-[`medical-image-std`](https://github.com/LATIS-DocumentAI-Group/medical-image-std) for
+[`medical-image-std`](https://pypi.org/project/medical-image-std/) (GitHub repo: https://github.com/LATIS-DocumentAI-Group/medical-image-std) for
 GPU-accelerated algorithms, and is paired with an Angular 19 + CornerstoneJS frontend
 (`dicom-viewer`).
 
