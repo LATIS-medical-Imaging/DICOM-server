@@ -15,16 +15,29 @@ Infrastructure complete:
 - GitHub Actions CI: lint → test → docker → security
 - `make ci` mirrors CI locally — all targets run in Docker, no local Python needed
 - Initial Alembic migration covers all 10 ORM models
-- Presigned upload/download endpoints live at `POST /api/v1/dicom/presign-upload` and `GET /api/v1/dicom/presign-download`
+
+Ingestion flow complete:
+- `POST /api/v1/presign/upload` — returns presigned PUT URL for direct browser→MinIO upload
+- `GET  /api/v1/presign/download` — returns presigned GET URL for direct MinIO→browser download
+- `POST /api/v1/uploads` — creates UploadJob row, enqueues `ingest_dicom_instance` Celery task
+- `GET  /api/v1/uploads/{job_id}` — polls ingestion progress
+- `IngestionService` — upserts Patient/Study/Series/Instance, generates JPEG thumbnail
+- `UploadService` — creates UploadJob and enqueues task
+
+Metadata read endpoints complete:
+- `GET /api/v1/studies?owner_id=...` — list studies (excludes soft-deleted, newest first)
+- `GET /api/v1/studies/{study_id}` — single study
+- `GET /api/v1/studies/{study_id}/series` — series ordered by series_number
+- `GET /api/v1/studies/{study_id}/series/{series_id}/instances` — instances ordered by instance_number
+- `StudyService` — all read queries
 
 ## What's next
 
-Ingestion flow:
-1. Upload job tracking endpoints (`POST /uploads`, `GET /uploads/{job_id}`)
-2. Celery task `ingest_dicom_instance`: download from MinIO → parse with pydicom → upsert Patient/Study/Series/Instance → generate thumbnail → update UploadJob status
+- Wire up the Angular viewer against these endpoints
 
 ## Known pitfalls
 
-- `bitnami/minio:latest` manifest fails in GitHub Actions CI — MinIO service was removed from the test job entirely; tests needing storage must mock it
+- `bitnami/minio:latest` manifest fails in GitHub Actions CI — MinIO service removed from test job; tests needing storage must mock it
 - pgAdmin rejects `.local` TLD emails — use a normal domain in `PGADMIN_EMAIL`
-- ruff strips the `import app.db.models` in `alembic/env.py` as unused — it must stay (see conventions)
+- ruff strips `import app.db.models` in `alembic/env.py` as unused — it must stay (see conventions)
+- After changing `pyproject.toml`, run `make build-tools` to rebuild the tools image

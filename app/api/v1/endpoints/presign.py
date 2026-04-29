@@ -1,4 +1,4 @@
-"""DICOM file upload and download endpoints."""
+"""Presigned URL endpoints — MinIO URL broker, no DICOM bytes touch this server."""
 
 from __future__ import annotations
 
@@ -16,19 +16,16 @@ router = APIRouter()
 
 
 @router.post(
-    "/presign-upload",
+    "/upload",
     response_model=PresignedUploadResponse,
     status_code=status.HTTP_200_OK,
-    summary="Request a presigned PUT URL for direct-to-MinIO upload",
+    summary="Get a presigned PUT URL for direct-to-MinIO upload",
 )
 def presign_upload(
     body: PresignedUploadRequest,
     storage: StorageDep,
     settings: SettingsDep,
 ) -> PresignedUploadResponse:
-    """Generate a short-lived presigned URL the client uses to PUT a .dcm file
-    directly into MinIO — no DICOM bytes pass through the API server.
-    """
     key = storage.dicom_object_key(
         owner_id=body.owner_id,
         study_uid=body.study_instance_uid,
@@ -55,19 +52,16 @@ def presign_upload(
 
 
 @router.get(
-    "/presign-download",
+    "/download",
     response_model=PresignedDownloadResponse,
     status_code=status.HTTP_200_OK,
-    summary="Request a presigned GET URL for direct-from-MinIO download",
+    summary="Get a presigned GET URL for direct-from-MinIO download",
 )
 def presign_download(
     storage: StorageDep,
     settings: SettingsDep,
-    object_key: str = Query(..., description="MinIO object key returned by presign-upload."),
+    object_key: str = Query(..., description="MinIO object key returned by presign/upload."),
 ) -> PresignedDownloadResponse:
-    """Generate a short-lived presigned URL CornerstoneJS uses to stream a .dcm
-    file directly from MinIO — no DICOM bytes pass through the API server.
-    """
     bucket = settings.minio_bucket_dicom
     expires = settings.minio_presigned_url_expire_seconds
 

@@ -39,8 +39,10 @@ dependencies = [
     # Background tasks
     "celery[redis]>=5.4.0",
 
-    # DICOM processing (our companion library)
+    # DICOM processing
     "pydicom>=2.4.4",
+    "numpy>=1.26.0",
+    "pillow>=11.0.0",
     "medical-image-std",
 
     # HTTP client
@@ -98,7 +100,11 @@ ignore_missing_imports = true
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["redis.*", "minio.*"]
+module = ["redis.*", "minio.*", "pydicom.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["PIL.*", "numpy.*"]
 ignore_missing_imports = true
 
 # Code that *uses* untyped third-party decorators (e.g. @celery_app.task).
@@ -108,5 +114,6 @@ disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
