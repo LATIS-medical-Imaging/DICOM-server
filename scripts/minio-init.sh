@@ -18,7 +18,7 @@ until mc alias set "$ALIAS" "$ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD
 done
 echo "    Connected."
 
-# ---- Buckets ---------------------------------------------------------------
+# Buckets 
 for BUCKET in dicom-files thumbnails; do
   if mc ls "$ALIAS/$BUCKET" > /dev/null 2>&1; then
     echo "==> Bucket '$BUCKET' already exists — skipping."
@@ -28,7 +28,6 @@ for BUCKET in dicom-files thumbnails; do
   fi
 done
 
-# ---- CORS ------------------------------------------------------------------
 # Allows the Angular viewer to PUT (upload) and GET (download) directly.
 # CORS_MINIO_ORIGIN should be set per environment (http://localhost:4200 for local dev)
 cat > /tmp/cors.json << EOF
