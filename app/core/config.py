@@ -113,7 +113,7 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def _derive_celery_urls(self) -> "Settings":
+    def _derive_celery_urls(self) -> Settings:
         """Build Celery broker/backend URLs from Redis connection settings.
 
         Allows managed Redis services (Render, Railway, …) to supply only
