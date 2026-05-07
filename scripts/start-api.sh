@@ -1,11 +1,16 @@
 #!/bin/sh
-# Entrypoint for the API service on managed platforms (Render, Railway, etc.).
-# Runs Alembic migrations to head before starting the server, so the schema
-# is always up-to-date with the deployed code.
+# Entrypoint for the API service on managed platforms (Render free tier, etc.).
+# Background worker services are not available on the free plan, so the Celery
+# worker runs as a background process inside the same container.
 set -e
 
 echo "==> Running database migrations"
 alembic upgrade head
+
+echo "==> Starting Celery worker (background)"
+celery -A app.workers.celery_app.celery_app worker \
+    --loglevel=info \
+    --concurrency=1 &
 
 echo "==> Starting API server"
 exec uvicorn app.main:app \
