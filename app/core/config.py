@@ -11,7 +11,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -91,8 +91,10 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Celery
     # ------------------------------------------------------------------
-    celery_broker_url: str = "redis://redis:6379/1"
-    celery_result_backend: str = "redis://redis:6379/2"
+    # When not explicitly set, these are derived from REDIS_HOST/PORT so that
+    # managed Redis services (Render, Railway, etc.) only need those two vars.
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
     celery_task_default_queue: str = "default"
 
     # ------------------------------------------------------------------
@@ -109,6 +111,23 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _derive_celery_urls(self) -> Settings:
+        """Build Celery broker/backend URLs from Redis connection settings.
+
+        Allows managed Redis services (Render, Railway, …) to supply only
+        REDIS_HOST and REDIS_PORT without needing a full composed URL.
+        Explicit CELERY_BROKER_URL / CELERY_RESULT_BACKEND env vars take
+        precedence when set (e.g. local dev via .env).
+        """
+        auth = f":{self.redis_password}@" if self.redis_password else ""
+        base = f"redis://{auth}{self.redis_host}:{self.redis_port}"
+        if not self.celery_broker_url:
+            self.celery_broker_url = f"{base}/1"
+        if not self.celery_result_backend:
+            self.celery_result_backend = f"{base}/2"
+        return self
 
     # ------------------------------------------------------------------
     # Derived values
