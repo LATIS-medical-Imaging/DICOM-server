@@ -18,11 +18,21 @@ class StorageService:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        # Internal client — server-to-MinIO operations inside Docker (minio:9000).
         self.client = Minio(
             settings.minio_endpoint,
             access_key=settings.minio_access_key,
             secret_key=settings.minio_secret_key,
             secure=settings.minio_secure,
+        )
+
+        external = urllib.parse.urlparse(settings.minio_external_endpoint)
+        self._presign_client = Minio(
+            external.netloc,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=external.scheme == "https",
+            region="us-east-1",
         )
 
     # ------------------------------------------------------------------
@@ -56,21 +66,6 @@ class StorageService:
         return f"{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm"
 
     # ------------------------------------------------------------------
-    # Internal → external URL rewrite
-    # ------------------------------------------------------------------
-    def _to_external_url(self, internal_url: str) -> str:
-        """Replace the internal Docker hostname with the externally reachable endpoint.
-
-        MinIO generates presigned URLs using the client's configured endpoint
-        (e.g. ``minio:9000``). The browser can't reach that hostname, so we
-        swap in ``minio_external_endpoint`` (e.g. ``http://localhost:9000``).
-        """
-        parsed = urllib.parse.urlparse(internal_url)
-        external = urllib.parse.urlparse(self._settings.minio_external_endpoint)
-        rewritten = parsed._replace(scheme=external.scheme, netloc=external.netloc)
-        return urllib.parse.urlunparse(rewritten)
-
-    # ------------------------------------------------------------------
     # Pre-signed URLs (browser ↔ MinIO direct I/O)
     # ------------------------------------------------------------------
     def presigned_put_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
@@ -78,16 +73,14 @@ class StorageService:
         expires = timedelta(
             seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
         )
-        url = self.client.presigned_put_object(bucket, key, expires=expires)
-        return self._to_external_url(url)
+        return self._presign_client.presigned_put_object(bucket, key, expires=expires)
 
     def presigned_get_url(self, bucket: str, key: str, expires_seconds: int | None = None) -> str:
         """Return a presigned GET URL the client can use to download directly from MinIO."""
         expires = timedelta(
             seconds=expires_seconds or self._settings.minio_presigned_url_expire_seconds
         )
-        url = self.client.presigned_get_object(bucket, key, expires=expires)
-        return self._to_external_url(url)
+        return self._presign_client.presigned_get_object(bucket, key, expires=expires)
 
     # ------------------------------------------------------------------
     # Direct object I/O (server-side, e.g. Celery workers)
