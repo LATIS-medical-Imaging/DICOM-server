@@ -29,8 +29,8 @@ services:
     env: docker
     plan: free
     healthCheckPath: /api/v1/health/live
-    # Run Alembic migrations atomically before each new version goes live.
-    preDeployCommand: alembic upgrade head
+    # Runs migrations then starts uvicorn (preDeployCommand not available on free tier).
+    dockerCommand: sh scripts/start-api.sh
     envVars:
       - fromGroup: dicom-secrets
 
