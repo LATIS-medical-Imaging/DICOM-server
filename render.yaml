@@ -96,55 +96,6 @@ services:
       - key: DB_MAX_OVERFLOW
         value: "2"
 
-  - type: worker
-    name: dicom-worker-pfe
-    env: docker
-    plan: free
-    # Override the Dockerfile CMD without touching the image.
-    dockerCommand: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
-    envVars:
-      - fromGroup: dicom-secrets
-
-      - key: POSTGRES_HOST
-        fromDatabase:
-          name: dicom-db
-          property: host
-      - key: POSTGRES_PORT
-        fromDatabase:
-          name: dicom-db
-          property: port
-      - key: POSTGRES_USER
-        fromDatabase:
-          name: dicom-db
-          property: user
-      - key: POSTGRES_PASSWORD
-        fromDatabase:
-          name: dicom-db
-          property: password
-      - key: POSTGRES_DB
-        fromDatabase:
-          name: dicom-db
-          property: database
-
-      - key: REDIS_HOST
-        fromService:
-          type: redis
-          name: dicom-redis
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: redis
-          name: dicom-redis
-          property: port
-
-      - key: APP_ENV
-        value: production
-      - key: MINIO_SECURE
-        value: "true"
-      - key: MINIO_BUCKET_DICOM
-        value: dicom-files
-      - key: MINIO_BUCKET_THUMBNAILS
-        value: thumbnails
 
 # Shared secrets — set values manually in the Render dashboard after first sync.
 # Both the API and worker pull from this group so secrets are never duplicated.
