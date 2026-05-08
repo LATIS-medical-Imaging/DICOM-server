@@ -1,19 +1,16 @@
 # Railway deployment configuration — https://docs.railway.com/reference/config-as-code
 #
-# Two services point to this repo — MUST BE NAMED EXACTLY "api" and "worker"
-# in the Railway dashboard so the per-service config below is picked up.
+# This configures the API service (top-level [deploy] is what Railway reads).
+# For the worker service pointing to the same repo, set its start command
+# manually in the Railway dashboard to:
+#   celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
 
 [build]
 builder = "dockerfile"
 
-[services.api.deploy]
-startCommand = "sh scripts/start-api.sh"
+[deploy]
+startCommand = "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers"
 healthcheckPath = "/api/v1/health/live"
 healthcheckTimeout = 100
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
-
-[services.worker.deploy]
-startCommand = "celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
