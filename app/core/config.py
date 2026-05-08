@@ -11,7 +11,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import AnyHttpUrl, Field, field_validator, model_validator
+from pydantic import AliasChoices, AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,12 +57,14 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------
     # Database
+    # Accepts Railway's native PG* vars (PGHOST, PGPORT, …) as aliases so
+    # no manual variable references are needed in the Railway dashboard.
     # ------------------------------------------------------------------
-    postgres_user: str = "dicom"
-    postgres_password: str = "dicom"
-    postgres_db: str = "dicom"
-    postgres_host: str = "pgbouncer"
-    postgres_port: int = 6432
+    postgres_user: str = Field(default="dicom", validation_alias=AliasChoices("POSTGRES_USER", "PGUSER"))
+    postgres_password: str = Field(default="dicom", validation_alias=AliasChoices("POSTGRES_PASSWORD", "PGPASSWORD"))
+    postgres_db: str = Field(default="dicom", validation_alias=AliasChoices("POSTGRES_DB", "PGDATABASE"))
+    postgres_host: str = Field(default="pgbouncer", validation_alias=AliasChoices("POSTGRES_HOST", "PGHOST"))
+    postgres_port: int = Field(default=6432, validation_alias=AliasChoices("POSTGRES_PORT", "PGPORT"))
 
     db_pool_size: int = 10
     db_max_overflow: int = 5
@@ -70,11 +72,12 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------
     # Redis
+    # Accepts Railway's native REDIS* vars as aliases.
     # ------------------------------------------------------------------
-    redis_host: str = "redis"
-    redis_port: int = 6379
+    redis_host: str = Field(default="redis", validation_alias=AliasChoices("REDIS_HOST", "REDISHOST"))
+    redis_port: int = Field(default=6379, validation_alias=AliasChoices("REDIS_PORT", "REDISPORT"))
     redis_db: int = 0
-    redis_password: str | None = None
+    redis_password: str | None = Field(default=None, validation_alias=AliasChoices("REDIS_PASSWORD", "REDISPASSWORD"))
 
     # ------------------------------------------------------------------
     # MinIO / object storage
