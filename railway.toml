@@ -1,0 +1,19 @@
+# Railway deployment configuration — https://docs.railway.com/reference/config-as-code
+#
+# Two services point to this repo — MUST BE NAMED EXACTLY "api" and "worker"
+# in the Railway dashboard so the per-service config below is picked up.
+
+[build]
+builder = "dockerfile"
+
+[services.api.deploy]
+startCommand = "sh scripts/start-api.sh"
+healthcheckPath = "/api/v1/health/live"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[services.worker.deploy]
+startCommand = "celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

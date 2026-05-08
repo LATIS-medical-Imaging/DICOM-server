@@ -1,20 +1,16 @@
 #!/bin/sh
-# Entrypoint for the API service on managed platforms (Render free tier, etc.).
-# Background worker services are not available on the free plan, so the Celery
-# worker runs as a background process inside the same container.
+# Entrypoint for the API service on managed platforms (Railway, Render, etc.).
+# Runs Alembic migrations to head before starting the server so the schema
+# is always in sync with the deployed code.
 set -e
 
 echo "==> Running database migrations"
 alembic upgrade head
 
-echo "==> Starting Celery worker (background)"
-celery -A app.workers.celery_app.celery_app worker \
-    --loglevel=info \
-    --concurrency=1 &
-
 echo "==> Starting API server"
+# Railway injects $PORT; fall back to 8000 for other platforms.
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
-    --port 8000 \
+    --port "${PORT:-8000}" \
     --proxy-headers \
     --forwarded-allow-ips "*"
