@@ -43,6 +43,8 @@ dependencies = [
     "pydicom>=2.4.4",
     "numpy>=1.26.0",
     "pillow>=11.0.0",
+    "pylibjpeg>=2.0",
+    "pylibjpeg-libjpeg>=2.1",
     "medical-image-std",
 
     # HTTP client

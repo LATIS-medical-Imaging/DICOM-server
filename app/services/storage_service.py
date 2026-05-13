@@ -105,3 +105,12 @@ class StorageService:
             return True
         except S3Error:
             return False
+
+    def get_object_bytes(self, bucket: str, key: str) -> bytes:
+        """Fetch the full object content as bytes (server-side, e.g. processing pipeline)."""
+        response = self.client.get_object(bucket, key)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
