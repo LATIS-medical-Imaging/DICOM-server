@@ -162,7 +162,7 @@ def _apply_to_array(
     src = InMemoryImage(array=pixels.astype(np.float32))
     out = InMemoryImage(source_image=src)
 
-    handlers: dict[str, Callable[[], None]] = {
+    handlers: dict[str, Callable[[], object]] = {
         "top_hat": lambda: TopHatAlgorithm(radius=int(params.get("radius", 4)), device="cpu").apply(
             src, out
         ),
