@@ -129,6 +129,8 @@ services:
       - .env
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,6 +150,8 @@ services:
     command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
     env_file:
       - .env
+    volumes:
+      - .:/app
     depends_on:
       - api
       - redis

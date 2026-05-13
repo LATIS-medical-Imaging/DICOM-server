@@ -22,8 +22,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY pyproject.toml README.md ./
-# Install dependencies only (no project code yet) to maximise layer caching.
 RUN pip install --upgrade pip setuptools wheel \
+    && pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install "."
 
 # --- Dev stage: builder + dev extras (ruff, black, mypy, pytest). ----------
