@@ -163,18 +163,12 @@ def _apply_to_array(
     out = InMemoryImage(source_image=src)
 
     handlers: dict[str, Callable[[], None]] = {
-        "top_hat": lambda: TopHatAlgorithm(
-            radius=int(params.get("radius", 4)), device="cpu"
-        ).apply(src, out),
-        "kmeans": lambda: KMeansAlgorithm(
-            k=int(params.get("k", 2)), device="cpu"
-        ).apply(src, out),
-        "fcm": lambda: FCMAlgorithm(
-            c=int(params.get("c", 2)), device="cpu"
-        ).apply(src, out),
-        "pfcm": lambda: PFCMAlgorithm(
-            c=int(params.get("c", 2)), device="cpu"
-        ).apply(src, out),
+        "top_hat": lambda: TopHatAlgorithm(radius=int(params.get("radius", 4)), device="cpu").apply(
+            src, out
+        ),
+        "kmeans": lambda: KMeansAlgorithm(k=int(params.get("k", 2)), device="cpu").apply(src, out),
+        "fcm": lambda: FCMAlgorithm(c=int(params.get("c", 2)), device="cpu").apply(src, out),
+        "pfcm": lambda: PFCMAlgorithm(c=int(params.get("c", 2)), device="cpu").apply(src, out),
         "febds": lambda: FebdsAlgorithm(
             method=str(params.get("method", "dog")), device="cpu"
         ).apply(src, out),
