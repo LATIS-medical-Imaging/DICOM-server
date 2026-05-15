@@ -17,22 +17,17 @@ echo ""
 set -a; source "$ENV_FILE"; set +a
 mkdir -p "$RESULTS_DIR"
 
+DC="docker compose -f $COMPOSE_FILE --env-file $ENV_FILE --profile $PROFILE"
+
 echo "[1/4] Starting infrastructure (profile: $PROFILE)..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" up -d \
-  postgres pgbouncer redis minio minio-init api worker prometheus cadvisor grafana \
-  node-exporter postgres-exporter redis-exporter 2>/dev/null || \
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" up -d \
-  postgres pgbouncer redis minio minio-init api prometheus cadvisor grafana \
-  node-exporter postgres-exporter redis-exporter
+$DC up -d --build --wait api
+$DC up -d prometheus grafana cadvisor node-exporter postgres-exporter redis-exporter 2>/dev/null || true
 
 echo "[2/4] Waiting for API readiness..."
 "$SCRIPT_DIR/_wait_for_api.sh"
 
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" exec -T api \
-  alembic upgrade head 2>/dev/null || true
-
 echo "[3/4] Running k6 spike test..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" run --rm \
+$DC run --rm \
   -e K6_OUT="json=/results/k6_spike_${TIMESTAMP}.json" \
   k6 run /scripts/spike_test.js \
   --summary-export="/results/k6_summary_spike_${TIMESTAMP}.json" || true

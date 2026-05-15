@@ -87,6 +87,23 @@ services:
     networks:
       - perf
 
+  # Run Alembic migrations before API starts
+  db-migrate:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env.perf
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: "6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - perf
+
   # ===================== Application (CPU profile) =====================
 
   api:
@@ -113,6 +130,8 @@ services:
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      db-migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
@@ -146,6 +165,8 @@ services:
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      db-migrate:
         condition: service_completed_successfully
     profiles: ["cpu"]
     networks:
@@ -182,6 +203,8 @@ services:
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      db-migrate:
         condition: service_completed_successfully
     profiles: ["gpu"]
     networks:
@@ -285,15 +308,17 @@ services:
     build:
       context: ./locust
       dockerfile: Dockerfile
-    command: >
-      -f /perf/locust/locustfile.py
-      --host http://api:8000
-      --headless
-      --users ${BENCHMARK_CONCURRENCY:-5}
-      --spawn-rate 1
-      --run-time ${BENCHMARK_DURATION:-60s}
-      --csv /perf/results/locust
-      --html /perf/reports/locust_report.html
+    command:
+      [
+        "-f", "/perf/locust/locustfile.py",
+        "--host", "http://api:8000",
+        "--headless",
+        "--users", "${BENCHMARK_CONCURRENCY:-5}",
+        "--spawn-rate", "1",
+        "--run-time", "${BENCHMARK_DURATION:-60s}",
+        "--csv", "/perf/results/locust",
+        "--html", "/perf/reports/locust_report.html",
+      ]
     env_file: .env.perf
     volumes:
       - ./locust:/perf/locust:ro

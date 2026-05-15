@@ -25,27 +25,22 @@ export BENCHMARK_CONCURRENCY="${BENCHMARK_CONCURRENCY:-5}"
 mkdir -p "$RESULTS_DIR"
 mkdir -p "$PERF_DIR/reports"
 
-# Start infrastructure
+DC="docker compose -f $COMPOSE_FILE --env-file $ENV_FILE --profile $PROFILE"
+
+# Start infrastructure (db-migrate runs automatically as api/worker dependency)
 echo "[1/5] Starting infrastructure (profile: $PROFILE)..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" up -d \
-  postgres pgbouncer redis minio minio-init api worker prometheus cadvisor grafana \
-  node-exporter postgres-exporter redis-exporter 2>/dev/null || \
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" up -d \
-  postgres pgbouncer redis minio minio-init api prometheus cadvisor grafana \
-  node-exporter postgres-exporter redis-exporter
+$DC up -d --build --wait api
 
 # Wait for API
 echo "[2/5] Waiting for API readiness..."
 "$SCRIPT_DIR/_wait_for_api.sh"
 
-# Run Alembic migration so DB tables exist
-echo "[2.5/5] Running database migration..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" exec -T api \
-  alembic upgrade head 2>/dev/null || true
+# Start monitoring (best-effort, don't fail if cadvisor can't bind)
+$DC up -d prometheus grafana cadvisor node-exporter postgres-exporter redis-exporter 2>/dev/null || true
 
 # Run k6 load test
 echo "[3/5] Running k6 load test..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" run --rm \
+$DC run --rm \
   -e K6_OUT="json=/results/k6_load_${TIMESTAMP}.json" \
   k6 run /scripts/load_test.js \
   --summary-export="/results/k6_summary_load_${TIMESTAMP}.json" || true
@@ -56,8 +51,7 @@ cp "$PERF_DIR/results/k6_load_${TIMESTAMP}.json" "$RESULTS_DIR/" 2>/dev/null || 
 
 # Run Locust load test
 echo "[4/5] Running Locust load test..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" run --rm \
-  locust || true
+$DC run --rm locust || true
 
 # Collect metrics
 echo "[5/5] Collecting metrics snapshot..."
