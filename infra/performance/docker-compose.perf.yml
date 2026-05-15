@@ -1,5 +1,3 @@
-version: "3.8"
-
 x-resource-defaults: &resource-defaults
   restart: unless-stopped
 
@@ -284,13 +282,11 @@ services:
   # ===================== Benchmark Runners =====================
 
   locust:
-    <<: *resource-defaults
     build:
-      context: ../../
+      context: ./locust
       dockerfile: Dockerfile
-      target: runtime
     command: >
-      locust -f /perf/locust/locustfile.py
+      -f /perf/locust/locustfile.py
       --host http://api:8000
       --headless
       --users ${BENCHMARK_CONCURRENCY:-5}
@@ -314,6 +310,7 @@ services:
 
   k6:
     image: grafana/k6:latest
+    user: root
     volumes:
       - ./k6:/scripts:ro
       - ./results:/results

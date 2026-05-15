@@ -28,11 +28,16 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" up
 echo "[2/4] Waiting for API readiness..."
 "$SCRIPT_DIR/_wait_for_api.sh"
 
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" exec -T api \
+  alembic upgrade head 2>/dev/null || true
+
 echo "[3/4] Running k6 spike test..."
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile "$PROFILE" run --rm \
-  -e K6_OUT="json=/results/spike/k6_spike_${TIMESTAMP}.json" \
+  -e K6_OUT="json=/results/k6_spike_${TIMESTAMP}.json" \
   k6 run /scripts/spike_test.js \
-  --summary-export="/results/spike/k6_summary_${TIMESTAMP}.json" || true
+  --summary-export="/results/k6_summary_spike_${TIMESTAMP}.json" || true
+
+cp "$PERF_DIR/results/k6_summary_spike_${TIMESTAMP}.json" "$RESULTS_DIR/" 2>/dev/null || true
 
 echo "[4/4] Collecting metrics snapshot..."
 "$SCRIPT_DIR/_collect_metrics.sh" "$RESULTS_DIR" "$TIMESTAMP" "$PROFILE" "spike"
