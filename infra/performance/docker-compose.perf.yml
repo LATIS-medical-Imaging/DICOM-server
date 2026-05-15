@@ -1,0 +1,339 @@
+version: "3.8"
+
+x-resource-defaults: &resource-defaults
+  restart: unless-stopped
+
+services:
+  # ===================== Core Stack =====================
+
+  postgres:
+    <<: *resource-defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - perf-postgres-data:/var/lib/postgresql/data
+    cpus: ${DB_CPUS:-0.3}
+    mem_limit: ${DB_MEM_LIMIT:-768m}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - perf
+
+  pgbouncer:
+    <<: *resource-defaults
+    image: edoburu/pgbouncer:latest
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-100}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-15}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - perf
+
+  redis:
+    <<: *resource-defaults
+    image: redis:7-alpine
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    cpus: ${REDIS_CPUS:-0.1}
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - perf
+
+  minio:
+    <<: *resource-defaults
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - perf-minio-data:/data
+    cpus: ${MINIO_CPUS:-0.2}
+    mem_limit: ${MINIO_MEM_LIMIT:-512m}
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - perf
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET_DICOM} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET_THUMBNAILS} &&
+      echo 'Buckets ready'
+      "
+    networks:
+      - perf
+
+  # ===================== Application (CPU profile) =====================
+
+  api:
+    <<: *resource-defaults
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      uvicorn app.main:create_app --factory
+      --host 0.0.0.0 --port 8000
+      --workers 2 --limit-concurrency 50
+    env_file: .env.perf
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: "6432"
+    cpus: ${API_CPUS:-0.8}
+    mem_limit: ${API_MEM_LIMIT:-1024m}
+    ports:
+      - "8000:8000"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  worker:
+    <<: *resource-defaults
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      celery -A app.workers.celery_app:celery worker
+      --loglevel=warning --concurrency=2
+    env_file: .env.perf
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: "6432"
+      CUDA_VISIBLE_DEVICES: ""
+    cpus: ${WORKER_CPUS:-0.6}
+    mem_limit: ${WORKER_MEM_LIMIT:-1024m}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    profiles: ["cpu"]
+    networks:
+      - perf
+
+  # ===================== Application (GPU profile) =====================
+
+  worker-gpu:
+    <<: *resource-defaults
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      celery -A app.workers.celery_app:celery worker
+      --loglevel=warning --concurrency=2
+    env_file: .env.perf
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: "6432"
+      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+    cpus: ${WORKER_CPUS:-0.6}
+    mem_limit: ${WORKER_MEM_LIMIT:-1024m}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    profiles: ["gpu"]
+    networks:
+      - perf
+
+  # ===================== Monitoring =====================
+
+  prometheus:
+    <<: *resource-defaults
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-1h}"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - perf-prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  grafana:
+    <<: *resource-defaults
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - perf-grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  cadvisor:
+    <<: *resource-defaults
+    image: gcr.io/cadvisor/cadvisor:latest
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  node-exporter:
+    <<: *resource-defaults
+    image: prom/node-exporter:latest
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  postgres-exporter:
+    <<: *resource-defaults
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  redis-exporter:
+    <<: *resource-defaults
+    image: oliver006/redis_exporter:latest
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  # ===================== Benchmark Runners =====================
+
+  locust:
+    <<: *resource-defaults
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+      target: runtime
+    command: >
+      locust -f /perf/locust/locustfile.py
+      --host http://api:8000
+      --headless
+      --users ${BENCHMARK_CONCURRENCY:-5}
+      --spawn-rate 1
+      --run-time ${BENCHMARK_DURATION:-60s}
+      --csv /perf/results/locust
+      --html /perf/reports/locust_report.html
+    env_file: .env.perf
+    volumes:
+      - ./locust:/perf/locust:ro
+      - ./results:/perf/results
+      - ./reports:/perf/reports
+      - ./utils:/perf/utils:ro
+      - ${DATASET_PATH:-./datasets}:/perf/datasets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+  k6:
+    image: grafana/k6:latest
+    volumes:
+      - ./k6:/scripts:ro
+      - ./results:/results
+    environment:
+      K6_OUT: json=/results/k6_results.json
+      API_BASE_URL: http://api:8000
+      BENCHMARK_OWNER_ID: ${BENCHMARK_OWNER_ID}
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["cpu", "gpu"]
+    networks:
+      - perf
+
+volumes:
+  perf-postgres-data:
+  perf-minio-data:
+  perf-prometheus-data:
+  perf-grafana-data:
+
+networks:
+  perf:
+    driver: bridge
