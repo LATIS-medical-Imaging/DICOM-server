@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.models.instance import Instance
+from app.schemas.processing import ROI
 from app.services.storage_service import StorageService
 
 logger = get_logger(__name__)
@@ -54,6 +55,7 @@ class ProcessingService:
         instance_id: uuid.UUID,
         filter_name: str,
         params: dict[str, Any],
+        roi: ROI | None = None,
     ) -> tuple[str, bool]:
         """Apply a filter to the instance's pixel data.
 
@@ -61,14 +63,14 @@ class ProcessingService:
         """
         instance = await self._load_instance(instance_id)
         source_key = instance.file_path
-        derived_key = self._derived_key(source_key, filter_name, params)
+        derived_key = self._derived_key(source_key, filter_name, params, roi)
         bucket = self._settings.minio_bucket_dicom
 
         if self._storage.object_exists(bucket, derived_key):
             return derived_key, True
 
         source_bytes = self._storage.get_object_bytes(bucket, source_key)
-        derived_bytes = self._run_filter(source_bytes, filter_name, params)
+        derived_bytes = self._run_filter(source_bytes, filter_name, params, roi)
 
         buffer = io.BytesIO(derived_bytes)
         self._storage.put_object(
@@ -95,20 +97,39 @@ class ProcessingService:
         return instance
 
     @staticmethod
-    def _derived_key(source_key: str, filter_name: str, params: dict[str, Any]) -> str:
+    def _derived_key(
+        source_key: str,
+        filter_name: str,
+        params: dict[str, Any],
+        roi: ROI | None,
+    ) -> str:
         """Content-addressed key so repeat requests reuse the prior result.
 
-        Example: `{owner}/{study}/{series}/{sop}.dcm` →
-        `{owner}/{study}/{series}/derived/{sop}--gaussian-{hash}.dcm`
+        ROI is part of the hash — same algorithm + same params + different
+        region must resolve to a different cached object.
         """
         prefix, _, filename = source_key.rpartition("/")
         sop = filename.removesuffix(".dcm") or filename
-        normalized = json.dumps(params, sort_keys=True, separators=(",", ":"))
+        roi_part = roi.model_dump() if roi else None
+        normalized = json.dumps(
+            {"params": params, "roi": roi_part}, sort_keys=True, separators=(",", ":")
+        )
         digest = hashlib.sha256(f"{filter_name}|{normalized}".encode()).hexdigest()[:12]
         return f"{prefix}/{_DERIVED_PREFIX}/{sop}--{filter_name}-{digest}.dcm"
 
-    def _run_filter(self, source_bytes: bytes, filter_name: str, params: dict[str, Any]) -> bytes:
-        """Decode → apply filter via `medical-image-std` → re-encode as DICOM."""
+    def _run_filter(
+        self,
+        source_bytes: bytes,
+        filter_name: str,
+        params: dict[str, Any],
+        roi: ROI | None,
+    ) -> bytes:
+        """Decode → apply filter via `medical-image-std` → re-encode as DICOM.
+
+        When an ROI is given, the filter runs on the cropped region only and
+        the result is pasted back into a copy of the original — pixels
+        outside the ROI keep their source values.
+        """
         ds = pydicom.dcmread(io.BytesIO(source_bytes))
         try:
             original = ds.pixel_array  # numpy, native dtype (typically uint16)
@@ -121,8 +142,18 @@ class ProcessingService:
             # come through this endpoint one instance at a time.
             raise FilterError("Only single-frame 2D images are supported for filtering.")
 
-        processed = _apply_to_array(original, filter_name, params)
-        scaled = _rescale_to_dtype(processed, original.dtype)
+        if roi is None:
+            processed = _apply_to_array(original, filter_name, params)
+            scaled = _rescale_to_dtype(processed, original.dtype)
+        else:
+            y0, x0, y1, x1 = _clamp_roi(roi, original.shape)
+            crop = original[y0:y1, x0:x1]
+            if crop.size == 0:
+                raise FilterError("ROI is empty after clamping to image bounds.")
+            crop_processed = _apply_to_array(crop, filter_name, params)
+            crop_scaled = _rescale_to_dtype(crop_processed, original.dtype)
+            scaled = original.copy()
+            scaled[y0:y1, x0:x1] = crop_scaled
 
         # Switch to uncompressed transfer syntax before writing back raw pixel
         # bytes — if the source used a compressed syntax (e.g. JPEG Lossless),
@@ -190,6 +221,16 @@ def _apply_to_array(
         raise FilterError(f"Filter '{filter_name}' produced no output.")
 
     return out.pixel_data.detach().cpu().numpy()
+
+
+def _clamp_roi(roi: ROI, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+    """Clip an ROI to image bounds and return (y0, x0, y1, x1) for numpy slicing."""
+    rows, cols = shape[0], shape[1]
+    x0 = max(0, min(roi.x, cols))
+    y0 = max(0, min(roi.y, rows))
+    x1 = max(x0, min(roi.x + roi.width, cols))
+    y1 = max(y0, min(roi.y + roi.height, rows))
+    return y0, x0, y1, x1
 
 
 def _rescale_to_dtype(processed: np.ndarray, target_dtype: np.dtype) -> np.ndarray:
