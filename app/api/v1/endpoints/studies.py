@@ -1,13 +1,18 @@
-"""Study, series, and instance metadata endpoints."""
+"""Study, series, and instance metadata endpoints.
+
+All endpoints require a valid access token. The current user is derived from
+that token — never from a request parameter — and the ``StudyService``
+visibility helpers enforce owner-or-share access control.
+"""
 
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter
 
-from app.api.deps import DBSession
+from app.api.deps import CurrentUser, DBSession
+from app.core.exceptions import NotFoundError
 from app.schemas.studies import (
     InstanceResponse,
     SeriesResponse,
@@ -22,13 +27,10 @@ router = APIRouter()
 @router.get(
     "",
     response_model=StudyListResponse,
-    summary="List all studies for a user",
+    summary="List studies visible to the authenticated user",
 )
-async def list_studies(
-    db: DBSession,
-    owner_id: Annotated[uuid.UUID, Query(description="UUID of the owning user.")],
-) -> StudyListResponse:
-    studies, total = await StudyService(db).list_studies(owner_id)
+async def list_studies(db: DBSession, user: CurrentUser) -> StudyListResponse:
+    studies, total = await StudyService(db).list_visible(user.id)
     return StudyListResponse(
         items=[StudyResponse.model_validate(s) for s in studies],
         total=total,
@@ -38,12 +40,10 @@ async def list_studies(
 @router.get(
     "/{study_id}",
     response_model=StudyResponse,
-    summary="Get a single study",
+    summary="Get a single study (must be owned by or shared with the caller)",
 )
-async def get_study(study_id: uuid.UUID, db: DBSession) -> StudyResponse:
-    study = await StudyService(db).get_study(study_id)
-    if study is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Study not found.")
+async def get_study(study_id: uuid.UUID, db: DBSession, user: CurrentUser) -> StudyResponse:
+    study = await StudyService(db).get_visible_study(study_id, user.id)
     return StudyResponse.model_validate(study)
 
 
@@ -52,8 +52,14 @@ async def get_study(study_id: uuid.UUID, db: DBSession) -> StudyResponse:
     response_model=list[SeriesResponse],
     summary="List all series in a study",
 )
-async def list_series(study_id: uuid.UUID, db: DBSession) -> list[SeriesResponse]:
-    series = await StudyService(db).list_series(study_id)
+async def list_series(
+    study_id: uuid.UUID,
+    db: DBSession,
+    user: CurrentUser,
+) -> list[SeriesResponse]:
+    service = StudyService(db)
+    await service.get_visible_study(study_id, user.id)  # 404 if not visible
+    series = await service.list_series(study_id)
     return [SeriesResponse.model_validate(s) for s in series]
 
 
@@ -66,6 +72,14 @@ async def list_instances(
     study_id: uuid.UUID,
     series_id: uuid.UUID,
     db: DBSession,
+    user: CurrentUser,
 ) -> list[InstanceResponse]:
-    instances = await StudyService(db).list_instances(series_id)
+    service = StudyService(db)
+    await service.get_visible_study(study_id, user.id)
+
+    series = await service.get_series(series_id)
+    if series is None or series.study_id != study_id:
+        raise NotFoundError("Series not found.")
+
+    instances = await service.list_instances(series_id)
     return [InstanceResponse.model_validate(i) for i in instances]

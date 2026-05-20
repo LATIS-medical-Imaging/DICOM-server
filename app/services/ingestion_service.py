@@ -13,6 +13,7 @@ import pydicom
 from PIL import Image
 from pydicom.dataset import Dataset
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -58,27 +59,37 @@ class IngestionService:
 
     def _upsert_patient(self, ds: Dataset, owner_id: uuid.UUID) -> Patient:
         patient_id_tag = _tag(ds, "PatientID") or "UNKNOWN"
-        patient = self._db.execute(
-            select(Patient).where(
-                Patient.patient_id == patient_id_tag,
-                Patient.created_by == owner_id,
-            )
-        ).scalar_one_or_none()
+        raw_sex = _tag(ds, "PatientSex", "O").upper()[:1]
+        sex = raw_sex if raw_sex in ("M", "F", "O") else "O"
 
-        if patient is None:
-            raw_sex = _tag(ds, "PatientSex", "O").upper()[:1]
-            sex = raw_sex if raw_sex in ("M", "F", "O") else "O"
-            patient = Patient(
+        # Use INSERT … ON CONFLICT DO NOTHING so that concurrent tasks uploading
+        # files from the same study (which share patient_id) never race each
+        # other into a UniqueViolation.  The composite constraint
+        # (patient_id, created_by) is the authoritative uniqueness boundary.
+        stmt = (
+            pg_insert(Patient)
+            .values(
                 created_by=owner_id,
                 patient_name=_tag(ds, "PatientName", "Unknown"),
                 patient_id=patient_id_tag,
                 birth_date=_parse_date(_tag(ds, "PatientBirthDate")) or date(1900, 1, 1),
                 sex=sex,
             )
-            self._db.add(patient)
-            self._db.flush()
-            logger.info("patient_created", patient_id=patient_id_tag)
+            .on_conflict_do_nothing(
+                index_elements=["patient_id", "created_by"],
+            )
+        )
+        self._db.execute(stmt)
 
+        # SELECT after the upsert works for both the "just inserted" and the
+        # "already existed / conflict suppressed" cases.
+        patient = self._db.execute(
+            select(Patient).where(
+                Patient.patient_id == patient_id_tag,
+                Patient.created_by == owner_id,
+            )
+        ).scalar_one()
+        logger.info("patient_upserted", patient_id=patient_id_tag)
         return patient
 
     def _upsert_study(

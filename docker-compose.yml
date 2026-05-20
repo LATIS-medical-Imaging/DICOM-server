@@ -124,7 +124,7 @@ services:
     image: dicom-server:latest
     container_name: dicom-api
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--reload"]
     env_file:
       - .env
     ports:

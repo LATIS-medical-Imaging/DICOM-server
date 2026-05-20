@@ -7,9 +7,12 @@ from pydantic import BaseModel, Field
 
 # Upload
 class PresignedUploadRequest(BaseModel):
-    """Body sent by the client to request a presigned PUT URL."""
+    """Body sent by the client to request a presigned PUT URL.
 
-    owner_id: str = Field(..., description="UUID of the user who owns this file.")
+    Note: ``owner_id`` is intentionally absent — it is derived server-side from
+    the authenticated user (see ``/api/v1/presign/upload``).
+    """
+
     study_instance_uid: str = Field(..., description="DICOM StudyInstanceUID.")
     series_instance_uid: str = Field(..., description="DICOM SeriesInstanceUID.")
     sop_instance_uid: str = Field(..., description="DICOM SOPInstanceUID (unique per file).")

@@ -9,9 +9,12 @@ from pydantic import BaseModel, Field
 
 
 class CreateUploadJobRequest(BaseModel):
-    """Posted by the client after it has PUT the .dcm file to MinIO."""
+    """Posted by the client after it has PUT the .dcm file to MinIO.
 
-    owner_id: str = Field(..., description="UUID of the uploading user.")
+    Note: ``owner_id`` is intentionally absent — it is derived server-side from
+    the authenticated user (see ``/api/v1/uploads``).
+    """
+
     object_key: str = Field(..., description="MinIO object key returned by presign-upload.")
     file_size_bytes: int = Field(..., gt=0, description="Exact byte size of the .dcm file.")
 
