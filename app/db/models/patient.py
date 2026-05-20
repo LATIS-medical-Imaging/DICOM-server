@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 
 class Patient(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "patients"
-    __table_args__ = (CheckConstraint("sex IN ('M', 'F', 'O')", name="ck_patients_sex"),)
+    __table_args__ = (
+        CheckConstraint("sex IN ('M', 'F', 'O')", name="ck_patients_sex"),
+        UniqueConstraint("patient_id", "created_by", name="uq_patients_patient_id_created_by"),
+    )
 
     created_by: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),

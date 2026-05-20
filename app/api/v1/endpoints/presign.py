@@ -1,11 +1,16 @@
-"""Presigned URL endpoints — MinIO URL broker, no DICOM bytes touch this server."""
+"""Presigned URL endpoints — MinIO URL broker, no DICOM bytes touch this server.
+
+The presigned URLs themselves bypass our JWT (they carry their own short-lived
+HMAC signature from MinIO/R2). Authorization is enforced *here*, at mint time:
+the owner of the resulting object is always the authenticated user.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
 from minio.error import S3Error
 
-from app.api.deps import SettingsDep, StorageDep
+from app.api.deps import CurrentUser, SettingsDep, StorageDep
 from app.schemas.dicom import (
     PresignedDownloadResponse,
     PresignedUploadRequest,
@@ -25,9 +30,10 @@ def presign_upload(
     body: PresignedUploadRequest,
     storage: StorageDep,
     settings: SettingsDep,
+    user: CurrentUser,
 ) -> PresignedUploadResponse:
     key = storage.dicom_object_key(
-        owner_id=body.owner_id,
+        owner_id=str(user.id),
         study_uid=body.study_instance_uid,
         series_uid=body.series_instance_uid,
         sop_uid=body.sop_instance_uid,
@@ -60,6 +66,7 @@ def presign_upload(
 def presign_download(
     storage: StorageDep,
     settings: SettingsDep,
+    user: CurrentUser,  # presence of valid Bearer is enough — narrower checks live in /studies
     object_key: str = Query(..., description="MinIO object key returned by presign/upload."),
 ) -> PresignedDownloadResponse:
     bucket = settings.minio_bucket_dicom

@@ -140,6 +140,23 @@ Endpoints:
 | Readiness     | http://localhost:8000/api/v1/health/ready |
 | MinIO console | http://localhost:9001                     |
 
+### Seed the first admin account
+
+There is no open registration endpoint — only admins can create user accounts.
+Add the following variables to your `.env` file before running the seed command:
+
+```env
+ADMIN_BOOTSTRAP_EMAIL=admin@example.com      # required
+ADMIN_BOOTSTRAP_PASSWORD=changeme123         # required, min 12 chars
+ADMIN_BOOTSTRAP_FIRST_NAME=Admin             # optional, defaults to "Admin"
+ADMIN_BOOTSTRAP_LAST_NAME=User               # optional, defaults to "User"
+```
+
+Then run:
+```bash
+docker compose exec api python -m app.cli.seed_admin
+```
+
 Stop the stack:
 
 ```bash
