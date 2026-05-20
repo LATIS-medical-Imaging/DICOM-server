@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -22,7 +22,9 @@ from app.db.models.share import Share, ShareStatus
 from app.db.models.study import Study
 
 
-def _active_share_filter(user_id: uuid.UUID, now: datetime) -> tuple:
+def _active_share_filter(
+    user_id: uuid.UUID, now: datetime
+) -> tuple[ColumnElement[bool], ColumnElement[bool], ColumnElement[bool]]:
     """Predicate for an active, non-expired share granted *to* ``user_id``."""
     return (
         Share.grantee_id == user_id,

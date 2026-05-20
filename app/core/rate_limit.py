@@ -66,4 +66,4 @@ async def cache_json_body(request: Request) -> None:
     async def _replay() -> dict[str, Any]:
         return {"type": "http.request", "body": body, "more_body": False}
 
-    request._receive = _replay  # type: ignore[attr-defined]
+    request._receive = _replay

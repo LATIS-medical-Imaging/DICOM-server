@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -55,7 +56,7 @@ async def get_current_user(
     return user
 
 
-def require_role(role: str):
+def require_role(role: str) -> Callable[..., Awaitable[User]]:
     """Factory: dependency that 403s unless the current user has ``role``."""
 
     async def _checker(user: Annotated[User, Depends(get_current_user)]) -> User:
