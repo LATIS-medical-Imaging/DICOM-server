@@ -39,9 +39,7 @@ PING_INTERVAL_SECONDS: int = 30
 async def _resolve_user(user_id: uuid.UUID) -> User | None:
     """Load an active, non-deleted user by primary key.  Returns ``None`` on any miss."""
     async with SessionLocal() as db:
-        result = await db.execute(
-            select(User).where(User.id == user_id, User.deleted_at.is_(None))
-        )
+        result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
         user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         return None
@@ -100,13 +98,13 @@ async def chat_socket(
                     recv_task.result()
                 except WebSocketDisconnect:
                     raise
-                except Exception:  # noqa: BLE001
+                except Exception:
                     raise
             else:
                 # Ping interval elapsed — send a keep-alive envelope.
                 try:
                     await websocket.send_json({"type": "ping", "data": {}})
-                except Exception:  # noqa: BLE001
+                except Exception:
                     break
     except WebSocketDisconnect:
         pass
