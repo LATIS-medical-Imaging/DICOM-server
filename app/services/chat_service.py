@@ -414,7 +414,7 @@ class ChatService:
         )
         return FriendshipResponse(
             id=friendship.id,
-            status=friendship.status, 
+            status=friendship.status,
             direction=direction,
             peer=UserSearchResult.model_validate(peer_user),
             requested_by=friendship.requested_by,
