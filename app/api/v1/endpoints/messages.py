@@ -40,18 +40,12 @@ async def send_message(
 async def list_messages(
     user: CurrentUser,
     db: DBSession,
-    with_: Annotated[
-        uuid.UUID,
-        Query(..., alias="with", description="Peer user id."),
-    ],
+    with_: Annotated[uuid.UUID, Query(alias="with", description="Peer user id.")],
     before: Annotated[
         datetime | None,
-        Query(None, description="Cursor: only messages older than this."),
+        Query(description="Cursor: only messages sent before this timestamp."),
     ] = None,
-    limit: Annotated[
-        int,
-        Query(50, ge=1, le=200),
-    ] = 50,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> MessageListResponse:
     """Newest-first slice of the 1:1 thread.
 

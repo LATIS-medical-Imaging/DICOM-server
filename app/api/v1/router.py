@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     uploads,
     users,
     ws_chat,
+    ws_ticket,
 )
 
 api_router = APIRouter()
@@ -27,4 +28,5 @@ api_router.include_router(presign.router, prefix="/presign", tags=["presign"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(studies.router, prefix="/studies", tags=["studies"])
 api_router.include_router(processing.router, prefix="/processing", tags=["processing"])
+api_router.include_router(ws_ticket.router, prefix="/ws-ticket", tags=["ws"])
 api_router.include_router(ws_chat.router, prefix="/ws", tags=["ws"])

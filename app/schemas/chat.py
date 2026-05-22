@@ -83,6 +83,17 @@ class UnreadCountResponse(BaseModel):
     count: int
 
 
+class WsTicketResponse(BaseModel):
+    """Single-use WebSocket handshake ticket.
+
+    Issued by ``POST /ws-ticket`` and consumed exactly once by the WebSocket
+    gateway during the upgrade handshake.  Expires after 30 seconds whether
+    used or not.
+    """
+
+    ticket: str
+
+
 WsEnvelopeType = Literal[
     "message.new",
     "friendship.invited",
