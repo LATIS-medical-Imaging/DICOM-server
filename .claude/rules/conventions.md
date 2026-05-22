@@ -15,8 +15,18 @@
 
 ## Endpoints
 - `async def` when hitting DB/Redis; plain `def` for blocking MinIO SDK calls
-- Query params: `Annotated[T, Query(...)]` pattern — not default argument style
-- DI aliases from `app/api/deps.py`: `DBSession`, `SettingsDep`, `StorageDep`
+- Query params with `Annotated`: put **only metadata** (alias, description, validators like `ge=`, `le=`) inside `Query()`; put the **default value** on the `=` side of the parameter — never inside `Query()`. FastAPI ≥ 0.115 raises `AssertionError` at startup if a default is set inside `Query()` when using `Annotated`.
+
+  ```python
+  # Correct
+  limit: Annotated[int, Query(ge=1, le=200)] = 50
+  before: Annotated[datetime | None, Query(description="...")] = None
+
+  # Wrong — AssertionError at startup
+  limit: Annotated[int, Query(50, ge=1, le=200)]
+  ```
+
+- DI aliases from `app/api/deps.py`: `DBSession`, `SettingsDep`, `StorageDep`, `CurrentUser`, `CurrentAdmin`
 - New endpoint: create `app/api/v1/endpoints/<domain>.py`, register in `app/api/v1/router.py`
 
 ## Service layer

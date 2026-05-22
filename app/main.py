@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.core.redis import close_redis
 from app.db.session import dispose_engine
 from app.middleware.request_id import RequestIDMiddleware
 from app.services.storage_service import StorageService
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("app_shutdown")
         await dispose_engine()
+        await close_redis()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
