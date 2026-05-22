@@ -18,10 +18,10 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_client: aioredis.Redis | None = None  # type: ignore[type-arg]
+_client: aioredis.Redis | None = None
 
 
-async def get_redis() -> aioredis.Redis:  # type: ignore[type-arg]
+async def get_redis() -> aioredis.Redis:
     """Return the shared async Redis client, creating it on first call."""
     global _client
     if _client is None:
