@@ -29,6 +29,49 @@
 - `CurrentAdmin` — same as `CurrentUser` but also asserts `role == 'admin'`
 - Password hashing: Argon2id via `argon2-cffi` with cost parameters from `Settings`
 
+## Series Phases — saved modifications
+
+### Why no new tables
+A *Phase* is conceptually "a named branch of a parent series" — the cleanest representation is to reuse the `series` table itself with two new columns:
+
+* `parent_series_id` (nullable self-FK, ON DELETE CASCADE) — NULL = original DICOM-ingested series; non-NULL = a phase derived from that parent.
+* `owner_id` (nullable FK to `users`, ON DELETE SET NULL) — the doctor who saved the phase. NULL for originals (their visibility comes from the parent study).
+
+Annotations attach to phase-owned Instance rows via the existing `instance_id` FK — no schema change to the `annotations` table.
+
+### Per-instance handling
+A phase Instance row is created for every slice the doctor *touched* (filter applied OR annotation drawn).
+
+* Pixel-modified slices: `file_path` = derived MinIO key under `derived/`.
+* Annotation-only slices: `file_path` = same key as the parent's instance (zero bytes duplicated, just a row).
+
+Each phase Instance gets a freshly-generated `sop_instance_uid` (via `pydicom.uid.generate_uid()`) because rows live under the phase's own series; the parent's SOP UIDs are not reused.
+
+### Rendering contract — backend merges
+`PhaseService.list_instances_rendered(series)` is the single rendering helper:
+
+* For an original series → returns its instances ordered by `instance_number` (same as `StudyService.list_instances`).
+* For a phase → returns the parent's instances with the phase's overrides spliced in by matching `instance_number`. Same shape, frontend doesn't branch.
+
+The studies endpoint `GET /studies/{}/series/{}/instances` routes through this helper, so the existing route serves both kinds of series transparently.
+
+### Save semantics
+* `PATCH /phases/{id}` with `instances` present → in-place save. Atomically deletes existing phase Instance rows (cascading their annotations) and inserts the new set in one transaction.
+* `PATCH /phases/{id}` without `instances` → rename only.
+* `POST /series/{parent_id}/phases` → always creates a new phase. The frontend's "Save As" routes here.
+
+### Visibility
+Phases are **private to their creator**. Reads enforce `WHERE parent_series_id = ? AND owner_id = current_user.id`. The parent study still has to be visible to the caller (owner-or-share check delegated to `StudyService.get_visible_study`).
+
+### Validation
+* Cross-series guard: every `parent_instance_id` in the payload must satisfy `instance.series_id == parent_series_id`. Reject 422 otherwise.
+* Blob existence: every `derived_object_key` is verified with `StorageService.object_exists()` before insert — prevents dangling rows that would crash the viewer.
+
+### What's NOT done
+* No deletion of MinIO `derived/` blobs when a phase is removed — content-addressing means another phase may still reference the same key.
+* No display-state persistence — window/level, zoom, rotation reset on reload.
+* `series.series_description` doubles as the phase's display name; `series.protocol_name` doubles as the optional description. Lean v1 — a dedicated `display_name` column can be added later.
+
 ## Real-time chat
 
 ### WebSocket connection

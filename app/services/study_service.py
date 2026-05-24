@@ -125,8 +125,19 @@ class StudyService:
         return (await self._db.execute(q)).scalar_one_or_none() is not None
 
     async def list_series(self, study_id: uuid.UUID) -> list[Series]:
+        """List the original DICOM-ingested series for a study.
+
+        Phases (``parent_series_id IS NOT NULL``) live in the same table but
+        belong to a separate endpoint (``GET /series/{id}/phases``) so the
+        sidebar's top-level list stays clean.
+        """
         result = await self._db.execute(
-            select(Series).where(Series.study_id == study_id).order_by(Series.series_number)
+            select(Series)
+            .where(
+                Series.study_id == study_id,
+                Series.parent_series_id.is_(None),
+            )
+            .order_by(Series.series_number)
         )
         return list(result.scalars().all())
 
@@ -145,3 +156,8 @@ class StudyService:
     async def get_instance(self, instance_id: uuid.UUID) -> Instance | None:
         result = await self._db.execute(select(Instance).where(Instance.id == instance_id))
         return result.scalar_one_or_none()
+
+    async def delete_series(self, series: Series) -> None:
+        """Delete a series and all its instances. (Cascades to phases and their instances too.)"""
+        await self._db.delete(series)
+        await self._db.commit()

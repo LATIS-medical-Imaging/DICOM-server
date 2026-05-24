@@ -1,4 +1,12 @@
-"""DICOM Series — a contiguous set of instances (slices) within a study."""
+"""DICOM Series — a contiguous set of instances (slices) within a study.
+
+A Series row also represents a "Phase": a derived branch of a parent series
+that holds a doctor's saved modifications (filtered instances + annotations).
+Phases are distinguished by ``parent_series_id IS NOT NULL`` and carry an
+``owner_id`` pointing at the user who saved them.  Originals keep both fields
+``NULL`` — visibility for originals comes from the parent study's ownership /
+shares model.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +24,7 @@ if TYPE_CHECKING:
     from app.db.models.instance import Instance
     from app.db.models.share import Share
     from app.db.models.study import Study
+    from app.db.models.user import User
 
 
 class Series(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -25,6 +34,23 @@ class Series(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         PG_UUID(as_uuid=True),
         ForeignKey("studies.id", ondelete="CASCADE"),
         nullable=False,
+    )
+
+    # Phase branching: NULL = original DICOM-ingested series; non-NULL = a phase
+    # derived from that parent.  ON DELETE CASCADE so deleting the original
+    # cleans up all phases that hung off it.
+    parent_series_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("series.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # The doctor who saved this phase.  NULL for originals.  SET NULL on user
+    # delete so the phase isn't wiped — its ownership just becomes orphaned.
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     series_instance_uid: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -52,3 +78,19 @@ class Series(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="Share.series_id",
     )
+
+    # Self-referential: a phase points at its parent; an original lists its phases.
+    parent: Mapped[Series | None] = relationship(
+        "Series",
+        remote_side="Series.id",
+        back_populates="phases",
+        foreign_keys=[parent_series_id],
+    )
+    phases: Mapped[list[Series]] = relationship(
+        "Series",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        foreign_keys=[parent_series_id],
+    )
+
+    owner: Mapped[User | None] = relationship("User", foreign_keys=[owner_id])
