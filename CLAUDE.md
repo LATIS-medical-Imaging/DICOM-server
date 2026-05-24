@@ -22,6 +22,7 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
   - `0001_initial_schema` — all core ORM models (User, Patient, Study, Series, Instance, UploadJob, Share, etc.)
   - `0002_fix_patient_uniqueness` — drops `UNIQUE(patient_id)`, adds `UNIQUE(patient_id, created_by)` to prevent race-condition duplicates when concurrent Celery tasks ingest anonymous DICOM files
   - `0003_chat_tables` — `friendships` and `messages` tables with all indexes and constraints
+- `0004_series_phases` — adds `parent_series_id` (self-FK CASCADE) and `owner_id` (FK SET NULL) to `series` plus partial indexes; enables the Phases feature without any new tables
 
 ### Authentication (`app/services/auth_service.py`, `app/api/v1/endpoints/auth.py`)
 - JWT (HS256) access tokens (15 min) + refresh tokens (7 days) via `app/core/security.py`
@@ -51,6 +52,18 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - Supported: `top_hat`, `kmeans`, `fcm`, `pfcm`, `febds`, `breast_mask` — all from `medical-image-std`
 - `ProcessingService` downloads source DICOM, runs algorithm, writes derived DICOM under a content-addressed key (`{owner}/{study}/{series}/derived/{sop}--{filter}-{hash}.dcm`)
 - Same `{filter, params}` hits the cached object — repeat calls return the existing presigned URL
+
+### Series Phases — saved modifications (`app/services/phase_service.py`, `app/api/v1/endpoints/phases.py`)
+- A **Phase** is a doctor-saved snapshot of modifications (filter results + annotations) on a parent series. Implemented as another `series` row with `parent_series_id` set + `owner_id` set — no new tables, just an additive column change in migration `0004_series_phases`
+- `Phase` Instance rows hold only the *touched* slices (filtered or annotated); each row points at the derived blob (filter) or at the parent's blob (annotation-only) — never duplicating bytes in MinIO
+- `GET /studies/{}/series/{}/instances` is **phase-aware but symmetric**: serves the merged stack (parent + phase overrides, ordered by `instance_number`) when called on a phase; the frontend doesn't branch
+- Annotations are wired up for the first time as part of this work. Existing `annotations` table is used unchanged — phase annotations attach to phase-owned Instance rows via the existing `instance_id` FK
+- Endpoints: `GET /series/{id}/phases`, `POST /series/{id}/phases`, `GET /phases/{id}`, `PATCH /phases/{id}` (in-place save), `DELETE /phases/{id}`
+- Save scope: server filter result + annotation list per touched slice. Display state (W/L, zoom, rotation, …) is **not persisted**
+- Phases are **private to their creator**: every read is scoped `WHERE owner_id = current_user.id` in addition to the parent-study visibility check
+- `pydicom.uid.generate_uid()` generates synthetic `SOPInstanceUID` / `SeriesInstanceUID` for phase rows (acceptable for an internal viewer; we're not exporting back to a PACS)
+- In-place PATCH is atomic delete-then-insert: the existing phase Instance rows are hard-deleted (cascading their annotations via FK) and the new set is inserted in one transaction
+- Derived blobs in MinIO are **never deleted** when a phase is removed — they're content-addressed and may belong to other phases
 
 ### Chat module (`app/api/v1/endpoints/`, `app/services/chat_service.py`, `app/services/ws_hub.py`)
 - **Friendships** — `POST /friendships/invite`, `GET /friendships`, `POST /friendships/{id}/accept`, `DELETE /friendships/{id}` (reject / unfriend)
@@ -91,3 +104,6 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - PgBouncer transaction pooling: DDL statements must target Postgres directly (port 5432), not PgBouncer (6432) — Alembic's `database_url_sync` is wired correctly for this
 - Concurrent DICOM ingestion of anonymous files (`patient_id='0'`) would previously race-insert the same patient row. Fixed in migration `0002` + `INSERT … ON CONFLICT DO NOTHING` in `IngestionService._upsert_patient`
 - FastAPI ≥ 0.115 with `Annotated[T, Query(...)]`: do **not** put the default value inside `Query()` — set it with `= <default>` on the parameter instead, or FastAPI raises `AssertionError` at startup
+- Phase creation must **not** bump the parent study's aggregate counters (`total_series_count`, `total_instance_count`, `total_size_bytes`) — those describe DICOM-ingested content only
+- `StudyService.list_series` filters `parent_series_id IS NULL` so the sidebar's top-level series list isn't polluted with every doctor's phases. Phases come from the separate `GET /series/{parent_id}/phases` endpoint
+- Deleting a phase does **not** delete its derived blobs in MinIO — they're content-addressed under `derived/` and may be shared with other phases (same filter + params hash). A future maintenance task can sweep orphans
