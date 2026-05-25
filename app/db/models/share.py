@@ -1,10 +1,21 @@
-"""Polymorphic-but-typed share: exactly one of (study_id, series_id, instance_id)."""
+"""Polymorphic-but-typed share: exactly one of (study_id, series_id, instance_id).
+
+A Share row grants ``grantee_id`` access to a study/series/instance owned by
+``grantor_id``.  Newly created shares are PENDING — the grantee must accept
+them (flip to ACTIVE) before they appear in their sidebar.  Visibility queries
+(``StudyService._active_share_filter``) only consider ACTIVE shares.
+
+Re-shares form a tree via ``parent_share_id``: when a MANAGE grantee re-shares
+to a third party, the child share points at the parent.  Revoking any share
+cascades REVOKED down the tree atomically, so losing access at any link
+removes downstream visibility too.
+"""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -23,8 +34,16 @@ class SharePermission:
     ANNOTATE = "annotate"
     MANAGE = "manage"
 
+    # Ordering used to enforce the "re-share at <= own permission" rule.
+    _RANK: ClassVar[dict[str, int]] = {VIEW: 1, ANNOTATE: 2, MANAGE: 3}
+
+    @classmethod
+    def rank(cls, perm: str) -> int:
+        return cls._RANK.get(perm, 0)
+
 
 class ShareStatus:
+    PENDING = "pending"
     ACTIVE = "active"
     REVOKED = "revoked"
     EXPIRED = "expired"
@@ -43,7 +62,7 @@ class Share(Base, UUIDPrimaryKeyMixin):
             name="ck_shares_permission",
         ),
         CheckConstraint(
-            "status IN ('active', 'revoked', 'expired')",
+            "status IN ('pending', 'active', 'revoked', 'expired')",
             name="ck_shares_status",
         ),
     )
@@ -75,20 +94,44 @@ class Share(Base, UUIDPrimaryKeyMixin):
         nullable=True,
     )
 
+    # Re-share lineage.  NULL for shares created by the resource owner; set to
+    # the re-sharer's own incoming share when a MANAGE grantee re-shares.
+    parent_share_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("shares.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
     permission: Mapped[str] = mapped_column(
         String(20), nullable=False, default=SharePermission.VIEW
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     message: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ShareStatus.ACTIVE)
+    # Default PENDING — receiver must Accept (`POST /shares/{id}/accept`)
+    # before the share grants visibility.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ShareStatus.PENDING)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     study: Mapped[Study | None] = relationship(back_populates="shares", foreign_keys=[study_id])
     series: Mapped[Series | None] = relationship(back_populates="shares", foreign_keys=[series_id])
     instance: Mapped[Instance | None] = relationship(
         back_populates="shares", foreign_keys=[instance_id]
+    )
+
+    parent: Mapped[Share | None] = relationship(
+        "Share",
+        remote_side="Share.id",
+        back_populates="children",
+        foreign_keys=[parent_share_id],
+    )
+    children: Mapped[list[Share]] = relationship(
+        "Share",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        foreign_keys=[parent_share_id],
     )

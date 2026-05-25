@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 import pydicom.uid
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -32,6 +33,8 @@ from app.core.exceptions import (
 from app.db.models.annotation import Annotation
 from app.db.models.instance import Instance
 from app.db.models.series import Series
+from app.db.models.share import Share, SharePermission, ShareStatus
+from app.db.models.study import Study
 from app.schemas.phases import (
     AnnotationPayload,
     CreatePhaseRequest,
@@ -149,8 +152,13 @@ class PhaseService:
         user_id: uuid.UUID,
         payload: CreatePhaseRequest,
     ) -> Series:
-        """Persist a new phase.  Transactional — partial failure rolls back."""
+        """Persist a new phase.  Transactional — partial failure rolls back.
+
+        Permission: caller must own the parent study OR hold an active
+        share on the series (or its study) with permission >= ANNOTATE.
+        """
         parent = await self._load_parent_visible(parent_series_id, user_id)
+        await self._assert_can_write(parent, user_id)
         parent_instances_by_id = await self._load_parent_instances_indexed(parent.id)
         await self._validate_payload_instances(
             payload.instances,
@@ -195,6 +203,12 @@ class PhaseService:
         hard-deleted (which cascade-deletes their annotations via the FK
         ``ON DELETE CASCADE``) and the new set is inserted — all in one
         transaction so a half-updated phase can never be observed.
+
+        Permission: ``get_phase`` already enforces phase ownership; if the
+        update includes pixel/annotation changes (``payload.instances``),
+        we additionally re-check write access on the parent series so a
+        previously-permitted share that's since been revoked can't keep
+        saving.
         """
         phase = await self.get_phase(phase_id, user_id)
 
@@ -209,6 +223,10 @@ class PhaseService:
         if payload.instances is not None:
             parent_id = phase.parent_series_id
             assert parent_id is not None  # phase invariant
+            parent = await self._db.get(Series, parent_id)
+            if parent is None:
+                raise NotFoundError("Parent series not found.")
+            await self._assert_can_write(parent, user_id)
             parent_instances_by_id = await self._load_parent_instances_indexed(parent_id)
             await self._validate_payload_instances(
                 payload.instances,
@@ -266,6 +284,33 @@ class PhaseService:
         # Visibility on the parent study (owner or share).
         await self._studies.get_visible_study(parent.study_id, user_id)
         return parent
+
+    async def _assert_can_write(self, series: Series, user_id: uuid.UUID) -> None:
+        """Owner of the parent study OR active share with permission >= ANNOTATE.
+
+        Used as a write-permission gate for ``create_phase`` / ``update_phase``.
+        Read-visibility is already enforced by ``_load_parent_visible`` (which
+        calls ``StudyService.get_visible_study``); this is the stricter check
+        layered on top.
+        """
+        study = await self._db.get(Study, series.study_id)
+        if study is None:
+            raise NotFoundError("Series not found.")
+        if study.owner_id == user_id:
+            return  # owners can always write
+
+        now = datetime.now(UTC)
+        result = await self._db.execute(
+            select(Share.permission).where(
+                Share.grantee_id == user_id,
+                or_(Share.series_id == series.id, Share.study_id == series.study_id),
+                Share.status == ShareStatus.ACTIVE,
+                or_(Share.expires_at.is_(None), Share.expires_at > now),
+            )
+        )
+        perms = [row[0] for row in result.all()]
+        if not any(p in (SharePermission.ANNOTATE, SharePermission.MANAGE) for p in perms):
+            raise PermissionDeniedError("You don't have permission to save changes on this series.")
 
     async def _load_parent_instances_indexed(
         self, parent_series_id: uuid.UUID

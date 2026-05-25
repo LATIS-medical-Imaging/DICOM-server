@@ -6,10 +6,13 @@ from fastapi import APIRouter, HTTPException, status
 from minio.error import S3Error
 
 from app.api.deps import CurrentUser, DBSession, SettingsDep, StorageDep
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, PermissionDeniedError
+from app.db.models.share import SharePermission
 from app.schemas.processing import ApplyFilterRequest, ApplyFilterResponse
 from app.services.processing_service import FilterError, ProcessingService
+from app.services.share_service import ShareService
 from app.services.study_service import StudyService
+from app.services.ws_hub import get_ws_hub
 
 router = APIRouter()
 
@@ -36,7 +39,17 @@ async def apply_filter(
     series = await study_service.get_series(instance.series_id)
     if series is None:
         raise NotFoundError("Instance not found.")
-    await study_service.get_visible_study(series.study_id, user.id)  # 404 if not visible
+    study = await study_service.get_visible_study(series.study_id, user.id)
+
+    # Write permission: owner OR active share with permission >= ANNOTATE.
+    # VIEW-only grantees cannot mutate pixels (no filter, no annotation save).
+    if study.owner_id != user.id:
+        share_service = ShareService(db, get_ws_hub())
+        perm = await share_service.caller_permission_for_series(user.id, series)
+        if perm not in (SharePermission.ANNOTATE, SharePermission.MANAGE):
+            raise PermissionDeniedError(
+                "You don't have permission to apply filters on this series."
+            )
 
     service = ProcessingService(db, storage, settings)
     try:

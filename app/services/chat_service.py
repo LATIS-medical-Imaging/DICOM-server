@@ -16,7 +16,7 @@ notification for a write that's not yet durable.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from typing import Literal
 
 from sqlalchemy import and_, case, func, or_, select, update
@@ -25,6 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
 from app.db.models.friendship import Friendship, FriendshipStatus
 from app.db.models.message import Message
+from app.db.models.series import Series
+from app.db.models.share import Share
+from app.db.models.study import Study
 from app.db.models.user import User, UserRole
 from app.schemas.chat import (
     ConversationResponse,
@@ -32,6 +35,7 @@ from app.schemas.chat import (
     MessageResponse,
     UserSearchResult,
 )
+from app.schemas.shares import ShareEmbeddedDto, ShareTargetSummary
 from app.services.ws_hub import WebSocketHub
 
 
@@ -137,7 +141,22 @@ class ChatService:
         self,
         current_user_id: uuid.UUID,
         status: Literal["pending", "accepted"],
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[FriendshipResponse]:
+        """List the caller's friendships filtered by status.
+
+        ``q`` enables peer-name/email search for the share dialog's friend
+        picker.  ``limit`` + ``offset`` paginate (used by the picker's
+        "Load more" button).  Without ``q`` and with a generous limit this is
+        backwards-compatible with the original chat call sites.
+        """
+        # Join to the peer (the other side of the canonical pair) for search.
+        peer_id_expr = case(
+            (Friendship.user_a_id == current_user_id, Friendship.user_b_id),
+            else_=Friendship.user_a_id,
+        )
         stmt = (
             select(Friendship)
             .where(
@@ -149,6 +168,17 @@ class ChatService:
             )
             .order_by(Friendship.updated_at.desc())
         )
+        if q:
+            pattern = f"%{q.strip().lower()}%"
+            peer_alias = User
+            stmt = stmt.join(peer_alias, peer_alias.id == peer_id_expr).where(
+                or_(
+                    func.lower(peer_alias.first_name).like(pattern),
+                    func.lower(peer_alias.last_name).like(pattern),
+                    func.lower(peer_alias.email).like(pattern),
+                )
+            )
+        stmt = stmt.offset(offset).limit(limit)
         rows = (await self._db.execute(stmt)).scalars().all()
         return [await self._to_friendship_response(f, current_user_id) for f in rows]
 
@@ -281,7 +311,7 @@ class ChatService:
         )
         await self._db.commit()
 
-        return [MessageResponse.model_validate(m) for m in rows]
+        return [await self._message_to_response(m) for m in rows]
 
     async def list_conversations(
         self,
@@ -351,16 +381,20 @@ class ChatService:
         unread_by_peer = {row[0]: row[1] for row in (await self._db.execute(unread_stmt)).all()}
 
         # Step 4 — assemble, sorted by recency (peers with no messages last).
+        # Always use _message_to_response so share-card messages are embedded
+        # correctly — model_validate can't coerce Share ORM objects into
+        # ShareEmbeddedDto because that schema has no from_attributes config.
         conversations: list[ConversationResponse] = []
         for peer_id in peer_ids:
             last = last_by_peer.get(peer_id)
             conversations.append(
                 ConversationResponse(
                     peer=friends_by_id[peer_id].peer,
-                    last_message=MessageResponse.model_validate(last) if last else None,
+                    last_message=await self._message_to_response(last) if last else None,
                     unread_count=int(unread_by_peer.get(peer_id, 0)),
                 )
             )
+
         conversations.sort(
             key=lambda c: (
                 c.last_message.sent_at if c.last_message else datetime.min.replace(tzinfo=UTC)
@@ -397,6 +431,86 @@ class ChatService:
         if friendship is None:
             raise PermissionDeniedError("You can only message accepted friends.")
         return friendship
+
+    async def _message_to_response(self, message: Message) -> MessageResponse:
+        """Materialise a Message ORM row into a wire response with the share
+        DTO embedded when ``share_id`` is set.
+
+        We can't rely on ``MessageResponse.model_validate(message)`` to do
+        this automatically: the embedded ``ShareEmbeddedDto`` carries a
+        joined ``grantor: UserSearchResult`` and a built-up
+        ``target: ShareTargetSummary`` that don't live as attributes on the
+        Share ORM object.
+        """
+        if message.share_id is None or message.share is None:
+            return MessageResponse(
+                id=message.id,
+                sender_id=message.sender_id,
+                recipient_id=message.recipient_id,
+                body=message.body,
+                sent_at=message.sent_at,
+                read_at=message.read_at,
+                share=None,
+            )
+
+        share = message.share
+        grantor = await self._db.get(User, share.grantor_id)
+        if grantor is None:
+            raise NotFoundError("Share grantor no longer exists.")
+
+        target = await self._build_target_summary(share)
+        embedded = ShareEmbeddedDto(
+            id=share.id,
+            grantor=UserSearchResult.model_validate(grantor),
+            grantee_id=share.grantee_id,
+            permission=share.permission,  # type: ignore[arg-type]
+            status=share.status,  # type: ignore[arg-type]
+            target=target,
+            parent_share_id=share.parent_share_id,
+            created_at=share.created_at,
+            accepted_at=share.accepted_at,
+            revoked_at=share.revoked_at,
+        )
+        return MessageResponse(
+            id=message.id,
+            sender_id=message.sender_id,
+            recipient_id=message.recipient_id,
+            body=message.body,
+            sent_at=message.sent_at,
+            read_at=message.read_at,
+            share=embedded,
+        )
+
+    async def _build_target_summary(self, share: Share) -> ShareTargetSummary:
+        if share.study_id is not None:
+            study = await self._db.get(Study, share.study_id)
+            if study is None:
+                raise NotFoundError("Shared study no longer exists.")
+            return ShareTargetSummary(
+                target_type="study",
+                target_id=study.id,
+                name=study.study_description or study.accession_number or study.study_instance_uid,
+                modality=study.modality,
+                study_date=(
+                    datetime.combine(study.study_date, time.min) if study.study_date else None
+                ),
+                instance_count=study.total_instance_count,
+            )
+        assert share.series_id is not None
+        series = await self._db.get(Series, share.series_id)
+        if series is None:
+            raise NotFoundError("Shared series no longer exists.")
+        study = await self._db.get(Study, series.study_id)
+        return ShareTargetSummary(
+            target_type="series",
+            target_id=series.id,
+            name=series.series_description or f"Series {series.series_number or '?'}",
+            modality=series.modality,
+            study_date=(
+                datetime.combine(study.study_date, time.min) if study and study.study_date else None
+            ),
+            instance_count=series.instance_count,
+        )
 
     async def _to_friendship_response(
         self,

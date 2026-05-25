@@ -13,6 +13,10 @@ from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser, DBSession, SettingsDep, StorageDep
 from app.core.exceptions import NotFoundError
+from app.db.models.study import Study
+from app.db.models.user import User
+from app.schemas.chat import UserSearchResult
+from app.schemas.shares import ShareSourceDto
 from app.schemas.studies import (
     InstanceResponse,
     SeriesResponse,
@@ -20,22 +24,49 @@ from app.schemas.studies import (
     StudyResponse,
 )
 from app.services.phase_service import PhaseService
+from app.services.share_service import ShareService
 from app.services.study_service import StudyService
+from app.services.ws_hub import get_ws_hub
 
 router = APIRouter()
+
+
+async def _serialise_study(
+    db: DBSession,
+    study: Study,
+    user_id: uuid.UUID,
+) -> StudyResponse:
+    """Serialise a Study, populating ``share_source`` for non-owners.
+
+    For owned studies returns the bare DTO; for studies the caller can only
+    see through a share, attaches the active Share row's id + grantor +
+    permission so the frontend's sidebar can render the "Shared by Dr X ·
+    Annotate" subtitle and the viewer can gate write actions.
+    """
+    response = StudyResponse.model_validate(study)
+    if study.owner_id != user_id:
+        share_service = ShareService(db, get_ws_hub())
+        share = await share_service.active_share_row_for_study(user_id, study.id)
+        if share is not None:
+            grantor = await db.get(User, share.grantor_id)
+            if grantor is not None:
+                response.share_source = ShareSourceDto(
+                    share_id=share.id,
+                    grantor=UserSearchResult.model_validate(grantor),
+                    permission=share.permission,  # type: ignore[arg-type]
+                )
+    return response
 
 
 @router.get(
     "",
     response_model=StudyListResponse,
-    summary="List studies visible to the authenticated user",
+    summary="List studies visible to the authenticated user (owned + shared)",
 )
 async def list_studies(db: DBSession, user: CurrentUser) -> StudyListResponse:
     studies, total = await StudyService(db).list_visible(user.id)
-    return StudyListResponse(
-        items=[StudyResponse.model_validate(s) for s in studies],
-        total=total,
-    )
+    items = [await _serialise_study(db, s, user.id) for s in studies]
+    return StudyListResponse(items=items, total=total)
 
 
 @router.get(
@@ -45,7 +76,7 @@ async def list_studies(db: DBSession, user: CurrentUser) -> StudyListResponse:
 )
 async def get_study(study_id: uuid.UUID, db: DBSession, user: CurrentUser) -> StudyResponse:
     study = await StudyService(db).get_visible_study(study_id, user.id)
-    return StudyResponse.model_validate(study)
+    return await _serialise_study(db, study, user.id)
 
 
 @router.get(
@@ -60,7 +91,7 @@ async def list_series(
 ) -> list[SeriesResponse]:
     service = StudyService(db)
     await service.get_visible_study(study_id, user.id)  # 404 if not visible
-    series = await service.list_series(study_id)
+    series = await service.list_series(study_id, viewer_id=user.id)
     return [SeriesResponse.model_validate(s) for s in series]
 
 
