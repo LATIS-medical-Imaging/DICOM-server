@@ -70,8 +70,7 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - "1555:9000"   # S3 API — browser presigned URL access
-      # Console (9001) not exposed — access via SSH tunnel if needed
+      - "127.0.0.1:9000:9000"   # Localhost only — Nginx proxies /storage/ here
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
@@ -107,7 +106,7 @@ services:
     env_file:
       - .env
     ports:
-      - "555:8000"    # Public API
+      - "127.0.0.1:8000:8000"    # Nginx proxies to this
     depends_on:
       postgres:
         condition: service_healthy
