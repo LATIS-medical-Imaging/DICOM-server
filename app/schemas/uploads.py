@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -22,9 +23,9 @@ class CreateUploadJobRequest(BaseModel):
 class UploadJobResponse(BaseModel):
     """Returned by both POST /uploads and GET /uploads/{job_id}."""
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
-    job_id: str = Field(alias="id", serialization_alias="job_id")
+    job_id: UUID = Field(alias="id", serialization_alias="job_id")
     status: str
     total_files: int
     processed_files: int
@@ -36,5 +37,3 @@ class UploadJobResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     updated_at: datetime
-
-    model_config = {"from_attributes": True, "populate_by_name": True}

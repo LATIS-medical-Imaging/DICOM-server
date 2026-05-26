@@ -140,7 +140,7 @@ class IngestionService:
             series = Series(
                 study_id=study_id,
                 series_instance_uid=series_uid,
-                series_number=int(getattr(ds, "SeriesNumber", 0)) or None,
+                series_number=int(sn) if (sn := getattr(ds, "SeriesNumber", None)) is not None else None,
                 modality=_tag(ds, "Modality", "OT"),
                 series_description=_tag(ds, "SeriesDescription") or None,
                 body_part_examined=_tag(ds, "BodyPartExamined") or None,
@@ -184,13 +184,13 @@ class IngestionService:
             series_id=series_id,
             sop_instance_uid=sop_uid,
             sop_class_uid=_tag(ds, "SOPClassUID") or None,
-            instance_number=int(getattr(ds, "InstanceNumber", 0)) or None,
-            rows=int(getattr(ds, "Rows", 0)) or None,
-            columns=int(getattr(ds, "Columns", 0)) or None,
-            bits_allocated=int(getattr(ds, "BitsAllocated", 0)) or None,
-            bits_stored=int(getattr(ds, "BitsStored", 0)) or None,
-            pixel_representation=int(getattr(ds, "PixelRepresentation", 0)),
-            number_of_frames=int(getattr(ds, "NumberOfFrames", 1)) or 1,
+            instance_number=_int_tag(ds, "InstanceNumber"),
+            rows=_int_tag(ds, "Rows"),
+            columns=_int_tag(ds, "Columns"),
+            bits_allocated=_int_tag(ds, "BitsAllocated"),
+            bits_stored=_int_tag(ds, "BitsStored"),
+            pixel_representation=_int_tag(ds, "PixelRepresentation") or 0,
+            number_of_frames=_int_tag(ds, "NumberOfFrames") or 1,
             window_center=_decimal_tag(ds, "WindowCenter"),
             window_width=_decimal_tag(ds, "WindowWidth"),
             rescale_intercept=_decimal_tag(ds, "RescaleIntercept"),
@@ -260,6 +260,16 @@ class IngestionService:
 
         except Exception as exc:
             logger.warning("thumbnail_generation_failed", object_key=object_key, error=str(exc))
+
+
+def _int_tag(ds: Dataset, name: str) -> int | None:
+    val = getattr(ds, name, None)
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _tag(ds: Dataset, name: str, default: str = "") -> str:

@@ -69,6 +69,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${CORS_MINIO_ORIGIN:-http://localhost:4200}
     volumes:
       - minio-data:/data
     ports:

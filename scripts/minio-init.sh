@@ -28,25 +28,8 @@ for BUCKET in dicom-files thumbnails; do
   fi
 done
 
-# Allows the Angular viewer to PUT (upload) and GET (download) directly.
-# CORS_MINIO_ORIGIN should be set per environment (http://localhost:4200 for local dev)
-cat > /tmp/cors.json << EOF
-{
-  "CORSRules": [
-    {
-      "AllowedOrigins": ["$ORIGIN"],
-      "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-      "AllowedHeaders": ["*"],
-      "ExposeHeaders": ["ETag", "Content-Length"],
-      "MaxAgeSeconds": 3600
-    }
-  ]
-}
-EOF
-
-for BUCKET in dicom-files thumbnails; do
-  mc cors set "$ALIAS/$BUCKET" /tmp/cors.json
-  echo "==> CORS set on '$BUCKET' for origin '$ORIGIN'."
-done
+# CORS is configured via MINIO_API_CORS_ALLOW_ORIGIN env var on the MinIO
+# server itself (in docker-compose.yml). Single-node MinIO does not support
+# the S3 PutBucketCors API, so mc cors set will not work here.
 
 echo "==> MinIO initialisation complete."
