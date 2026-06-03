@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,15 +19,11 @@ if TYPE_CHECKING:
     from app.db.models.user import User
 
 
-class UploadJobStatus:
-    PENDING = "pending"
-    UPLOADING = "uploading"
-    PROCESSING = "processing"
-    EXTRACTING_METADATA = "extracting_metadata"
-    STORING = "storing"
+class UploadJobStatus(str, enum.Enum):
+    PENDING = "pending"  # job created, worker hasn't picked it up yet
+    PROCESSING = "processing"  # worker is actively ingesting (useful for detecting stuck jobs)
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class UploadJob(Base, UUIDPrimaryKeyMixin):
@@ -34,11 +32,6 @@ class UploadJob(Base, UUIDPrimaryKeyMixin):
         CheckConstraint(
             "job_type IN ('dicom_upload', 'dicom_import', 'bulk_upload')",
             name="ck_upload_jobs_type",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'uploading', 'processing', 'extracting_metadata', "
-            "'storing', 'completed', 'failed', 'cancelled')",
-            name="ck_upload_jobs_status",
         ),
     )
 
@@ -54,7 +47,17 @@ class UploadJob(Base, UUIDPrimaryKeyMixin):
     )
 
     job_type: Mapped[str] = mapped_column(String(20), nullable=False, default="dicom_upload")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default=UploadJobStatus.PENDING)
+    status: Mapped[UploadJobStatus] = mapped_column(
+        SAEnum(
+            UploadJobStatus,
+            native_enum=False,
+            length=20,
+            name="upload_job_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=UploadJobStatus.PENDING,
+    )
 
     total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processed_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

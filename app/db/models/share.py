@@ -13,11 +13,13 @@ removes downstream visibility too.
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,20 +31,18 @@ if TYPE_CHECKING:
     from app.db.models.study import Study
 
 
-class SharePermission:
+class SharePermission(str, enum.Enum):
     VIEW = "view"
     ANNOTATE = "annotate"
     MANAGE = "manage"
 
-    # Ordering used to enforce the "re-share at <= own permission" rule.
-    _RANK: ClassVar[dict[str, int]] = {VIEW: 1, ANNOTATE: 2, MANAGE: 3}
-
     @classmethod
     def rank(cls, perm: str) -> int:
-        return cls._RANK.get(perm, 0)
+        _rank = {cls.VIEW: 1, cls.ANNOTATE: 2, cls.MANAGE: 3}
+        return _rank.get(perm, 0)  # type: ignore[call-overload, no-any-return]
 
 
-class ShareStatus:
+class ShareStatus(str, enum.Enum):
     PENDING = "pending"
     ACTIVE = "active"
     REVOKED = "revoked"
@@ -56,14 +56,6 @@ class Share(Base, UUIDPrimaryKeyMixin):
             "(study_id IS NOT NULL)::int + (series_id IS NOT NULL)::int "
             "+ (instance_id IS NOT NULL)::int = 1",
             name="exactly_one_resource",
-        ),
-        CheckConstraint(
-            "permission IN ('view', 'annotate', 'manage')",
-            name="ck_shares_permission",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'active', 'revoked', 'expired')",
-            name="ck_shares_status",
         ),
     )
 
@@ -102,14 +94,32 @@ class Share(Base, UUIDPrimaryKeyMixin):
         nullable=True,
     )
 
-    permission: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=SharePermission.VIEW
+    permission: Mapped[SharePermission] = mapped_column(
+        SAEnum(
+            SharePermission,
+            native_enum=False,
+            length=20,
+            name="share_permission",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=SharePermission.VIEW,
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Default PENDING — receiver must Accept (`POST /shares/{id}/accept`)
     # before the share grants visibility.
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default=ShareStatus.PENDING)
+    status: Mapped[ShareStatus] = mapped_column(
+        SAEnum(
+            ShareStatus,
+            native_enum=False,
+            length=20,
+            name="share_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=ShareStatus.PENDING,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

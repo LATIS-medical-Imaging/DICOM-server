@@ -13,6 +13,9 @@ from minio.error import S3Error
 from app.api.deps import CurrentUser, SettingsDep, StorageDep
 from app.schemas.dicom import (
     PresignedDownloadResponse,
+    PresignedUploadBatchRequest,
+    PresignedUploadBatchResponse,
+    PresignedUploadBatchResponseItem,
     PresignedUploadRequest,
     PresignedUploadResponse,
 )
@@ -55,6 +58,54 @@ def presign_upload(
         bucket=bucket,
         expires_in=expires,
     )
+
+
+@router.post(
+    "/upload/batch",
+    response_model=PresignedUploadBatchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get presigned PUT URLs for multiple files in one round-trip",
+)
+def presign_upload_batch(
+    body: PresignedUploadBatchRequest,
+    storage: StorageDep,
+    settings: SettingsDep,
+    user: CurrentUser,
+) -> PresignedUploadBatchResponse:
+    """Generate N presigned PUT URLs in a single call.
+
+    Response ``urls`` list is index-aligned with the request ``files`` list.
+    The client should upload each file in parallel using the corresponding URL,
+    then register one upload job per file via ``POST /uploads``.
+    """
+    bucket = settings.minio_bucket_dicom
+    expires = settings.minio_presigned_url_expire_seconds
+    items: list[PresignedUploadBatchResponseItem] = []
+
+    for file in body.files:
+        key = storage.dicom_object_key(
+            owner_id=str(user.id),
+            study_uid=file.study_instance_uid,
+            series_uid=file.series_instance_uid,
+            sop_uid=file.sop_instance_uid,
+        )
+        try:
+            upload_url = storage.presigned_put_url(bucket, key, expires_seconds=expires)
+        except S3Error as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Object storage unavailable: {exc}",
+            ) from exc
+        items.append(
+            PresignedUploadBatchResponseItem(
+                object_key=key,
+                upload_url=upload_url,
+                bucket=bucket,
+                expires_in=expires,
+            )
+        )
+
+    return PresignedUploadBatchResponse(urls=items)
 
 
 @router.get(

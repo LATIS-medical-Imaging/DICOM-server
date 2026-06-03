@@ -463,8 +463,8 @@ class ChatService:
             id=share.id,
             grantor=UserSearchResult.model_validate(grantor),
             grantee_id=share.grantee_id,
-            permission=share.permission,  # type: ignore[arg-type]
-            status=share.status,  # type: ignore[arg-type]
+            permission=share.permission,
+            status=share.status,
             target=target,
             parent_share_id=share.parent_share_id,
             created_at=share.created_at,

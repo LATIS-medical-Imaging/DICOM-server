@@ -89,3 +89,31 @@ class StudyListResponse(BaseModel):
 
     items: list[StudyResponse]
     total: int
+
+
+# ── Aggregated viewer response ─────────────────────────────────────────────
+# Returned by GET /studies/{id}/viewer — replaces the N+1 chain of
+# /series → /instances → /presign/download with a single authenticated call.
+
+
+class ViewerInstanceResponse(InstanceResponse):
+    """Instance metadata + a ready-to-use presigned GET URL for the pixel data."""
+
+    download_url: str
+    expires_in: int
+
+
+class ViewerSeriesResponse(SeriesResponse):
+    """Series metadata with all its instances (and their download URLs) embedded."""
+
+    instances: list[ViewerInstanceResponse]
+
+
+class ViewerStudyResponse(StudyResponse):
+    """Full study payload: metadata + every series + every instance + presigned URLs.
+
+    Replaces the client-side N+1 loop (list series → per-series list instances →
+    per-instance presign/download) with one authenticated round-trip.
+    """
+
+    series: list[ViewerSeriesResponse]

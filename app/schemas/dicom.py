@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-# Upload
+# Upload — single file
 class PresignedUploadRequest(BaseModel):
     """Body sent by the client to request a presigned PUT URL.
 
@@ -26,6 +26,42 @@ class PresignedUploadResponse(BaseModel):
     object_key: str = Field(..., description="MinIO object key — store this to request downloads.")
     bucket: str
     expires_in: int = Field(..., description="Seconds until the presigned URL expires.")
+
+
+# Upload — batch (one round-trip for multiple files)
+class PresignedUploadBatchItem(BaseModel):
+    """One file's DICOM identifiers within a batch presign request."""
+
+    study_instance_uid: str = Field(..., description="DICOM StudyInstanceUID.")
+    series_instance_uid: str = Field(..., description="DICOM SeriesInstanceUID.")
+    sop_instance_uid: str = Field(..., description="DICOM SOPInstanceUID.")
+    file_size_bytes: int = Field(..., gt=0)
+
+
+class PresignedUploadBatchRequest(BaseModel):
+    """Batch presign: one request → N presigned PUT URLs."""
+
+    files: list[PresignedUploadBatchItem] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="List of files to presign. Max 500 per call.",
+    )
+
+
+class PresignedUploadBatchResponseItem(BaseModel):
+    """Presigned PUT URL for one file. Index-aligned with the request list."""
+
+    object_key: str
+    upload_url: str
+    bucket: str
+    expires_in: int
+
+
+class PresignedUploadBatchResponse(BaseModel):
+    """Returned to the client; ``urls`` is index-aligned with the request ``files`` list."""
+
+    urls: list[PresignedUploadBatchResponseItem]
 
 
 # Download

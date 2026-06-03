@@ -13,10 +13,12 @@ incoming from outgoing invitations.
 
 from __future__ import annotations
 
+import enum
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
     pass
 
 
-class FriendshipStatus:
+class FriendshipStatus(str, enum.Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
 
@@ -36,10 +38,6 @@ class Friendship(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_a_id", "user_b_id", name="uq_friendships_pair"),
         CheckConstraint("user_a_id < user_b_id", name="ck_friendships_canonical_order"),
-        CheckConstraint(
-            "status IN ('pending', 'accepted')",
-            name="ck_friendships_status",
-        ),
         Index("ix_friendships_user_a_id", "user_a_id"),
         Index("ix_friendships_user_b_id", "user_b_id"),
     )
@@ -59,6 +57,14 @@ class Friendship(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=FriendshipStatus.PENDING
+    status: Mapped[FriendshipStatus] = mapped_column(
+        SAEnum(
+            FriendshipStatus,
+            native_enum=False,
+            length=16,
+            name="friendship_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=FriendshipStatus.PENDING,
     )
