@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -22,9 +23,7 @@ class CreateUploadJobRequest(BaseModel):
 class UploadJobResponse(BaseModel):
     """Returned by both POST /uploads and GET /uploads/{job_id}."""
 
-    model_config = {"from_attributes": True}
-
-    job_id: str = Field(alias="id", serialization_alias="job_id")
+    job_id: uuid.UUID = Field(alias="id", serialization_alias="job_id")
     status: str
     total_files: int
     processed_files: int

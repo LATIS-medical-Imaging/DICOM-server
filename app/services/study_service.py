@@ -124,13 +124,44 @@ class StudyService:
         )
         return (await self._db.execute(q)).scalar_one_or_none() is not None
 
-    async def list_series(self, study_id: uuid.UUID) -> list[Series]:
+    async def list_series(
+        self,
+        study_id: uuid.UUID,
+        viewer_id: uuid.UUID | None = None,
+    ) -> list[Series]:
         """List the original DICOM-ingested series for a study.
 
         Phases (``parent_series_id IS NOT NULL``) live in the same table but
         belong to a separate endpoint (``GET /series/{id}/phases``) so the
         sidebar's top-level list stays clean.
+
+        When ``viewer_id`` is supplied and they're not the study owner, the
+        result is filtered to only series the viewer has explicit visibility
+        on: a study-level share returns all series; a series-level share
+        returns only those series.  Owners (and callers passing
+        ``viewer_id=None``) get every original series.
         """
+        if viewer_id is not None:
+            study = await self.get_study(study_id)
+            if study is not None and study.owner_id != viewer_id:
+                visible_ids = await self._visible_series_ids(study_id, viewer_id)
+                if visible_ids is None:
+                    # Caller has no explicit series-level scoping → study-level
+                    # share (or no share at all, in which case endpoint-level
+                    # visibility already rejected them).
+                    pass
+                else:
+                    result = await self._db.execute(
+                        select(Series)
+                        .where(
+                            Series.study_id == study_id,
+                            Series.parent_series_id.is_(None),
+                            Series.id.in_(visible_ids),
+                        )
+                        .order_by(Series.series_number)
+                    )
+                    return list(result.scalars().all())
+
         result = await self._db.execute(
             select(Series)
             .where(
@@ -140,6 +171,46 @@ class StudyService:
             .order_by(Series.series_number)
         )
         return list(result.scalars().all())
+
+    async def _visible_series_ids(
+        self,
+        study_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> list[uuid.UUID] | None:
+        """Return the set of series ids in ``study_id`` reachable via active
+        series-scoped shares for ``user_id``, or ``None`` if a study-level
+        share grants the caller everything (so no filter is needed).
+        """
+        # Local imports to avoid cycles — this helper is read-only on Share.
+        from app.db.models.share import Share, ShareStatus
+
+        now = datetime.now(UTC)
+        # If a study-level active share exists, no series filter is needed.
+        study_share = (
+            await self._db.execute(
+                select(Share.id).where(
+                    Share.grantee_id == user_id,
+                    Share.study_id == study_id,
+                    Share.status == ShareStatus.ACTIVE,
+                    or_(Share.expires_at.is_(None), Share.expires_at > now),
+                )
+            )
+        ).first()
+        if study_share is not None:
+            return None  # caller sees every series
+
+        # Otherwise: only series-scoped shares.
+        rows = await self._db.execute(
+            select(Series.id)
+            .join(Share, Share.series_id == Series.id)
+            .where(
+                Series.study_id == study_id,
+                Share.grantee_id == user_id,
+                Share.status == ShareStatus.ACTIVE,
+                or_(Share.expires_at.is_(None), Share.expires_at > now),
+            )
+        )
+        return [row[0] for row in rows.all()]
 
     async def list_instances(self, series_id: uuid.UUID) -> list[Instance]:
         result = await self._db.execute(

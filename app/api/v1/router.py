@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     phases,
     presign,
     processing,
+    shares,
     studies,
     uploads,
     users,
@@ -33,5 +34,6 @@ api_router.include_router(
     phases.series_router, prefix="/series/{series_id}/phases", tags=["phases"]
 )
 api_router.include_router(phases.phase_router, prefix="/phases", tags=["phases"])
+api_router.include_router(shares.router, prefix="/shares", tags=["shares"])
 api_router.include_router(ws_ticket.router, prefix="/ws-ticket", tags=["ws"])
 api_router.include_router(ws_chat.router, prefix="/ws", tags=["ws"])

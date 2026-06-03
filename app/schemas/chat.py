@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
+
+# Share schemas reference chat's UserSearchResult, so we can't import the
+# other way here — use a forward ref string annotation on MessageResponse.share
+# and call ``MessageResponse.model_rebuild()`` from ``shares.py`` once both
+# modules are loaded.
+if TYPE_CHECKING:
+    from app.schemas.shares import ShareEmbeddedDto
 
 
 class UserSearchResult(BaseModel):
@@ -53,6 +60,13 @@ class SendMessageRequest(BaseModel):
 
 
 class MessageResponse(BaseModel):
+    """Chat message wire shape.
+
+    When ``share`` is set the message is a share attachment (chat bubble
+    renders a share card and ``body`` is an optional caption).  When
+    ``share`` is None the message is a plain text bubble.
+    """
+
     model_config = {"from_attributes": True}
 
     id: uuid.UUID
@@ -61,6 +75,9 @@ class MessageResponse(BaseModel):
     body: str
     sent_at: datetime
     read_at: datetime | None
+    # Forward ref — resolved by ``ShareEmbeddedDto.model_rebuild`` call at the
+    # bottom of ``app/schemas/shares.py``.
+    share: ShareEmbeddedDto | None = None
 
 
 class MessageListResponse(BaseModel):
@@ -95,10 +112,15 @@ class WsTicketResponse(BaseModel):
 
 
 WsEnvelopeType = Literal[
+    # Generic chat — also used for shares (a message with embedded share row
+    # = a share-card bubble; the frontend reducer doesn't need to branch).
     "message.new",
     "friendship.invited",
     "friendship.accepted",
     "friendship.removed",
+    # Share lifecycle — mutate the existing share-bubble in place.
+    "share.accepted",
+    "share.removed",
 ]
 
 
