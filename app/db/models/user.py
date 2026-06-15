@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, String
+from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
@@ -18,14 +20,13 @@ if TYPE_CHECKING:
     from app.db.models.user_session import UserSession
 
 
-class UserRole:
+class UserRole(str, enum.Enum):
     ADMIN = "admin"
     DOCTOR = "doctor"
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("role IN ('admin', 'doctor')", name="ck_users_role"),)
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -40,7 +41,17 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    role: Mapped[str] = mapped_column(String(20), nullable=False, default=UserRole.DOCTOR)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(
+            UserRole,
+            native_enum=False,
+            length=20,
+            name="user_role",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=UserRole.DOCTOR,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

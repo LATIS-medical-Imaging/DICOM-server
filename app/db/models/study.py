@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import date, time
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
-    CheckConstraint,
     Date,
     ForeignKey,
     Integer,
     String,
     Time,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -27,7 +30,7 @@ if TYPE_CHECKING:
     from app.db.models.user import User
 
 
-class StudyStatus:
+class StudyStatus(str, enum.Enum):
     PROCESSING = "processing"
     READY = "ready"
     ERROR = "error"
@@ -36,12 +39,6 @@ class StudyStatus:
 
 class Study(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "studies"
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('processing', 'ready', 'error', 'archived')",
-            name="ck_studies_status",
-        ),
-    )
 
     owner_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -68,7 +65,17 @@ class Study(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     total_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default=StudyStatus.PROCESSING)
+    status: Mapped[StudyStatus] = mapped_column(
+        SAEnum(
+            StudyStatus,
+            native_enum=False,
+            length=20,
+            name="study_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+        default=StudyStatus.PROCESSING,
+    )
 
     owner: Mapped[User] = relationship(back_populates="studies")
     patient: Mapped[Patient] = relationship(back_populates="studies")

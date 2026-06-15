@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.db.models.upload_job import UploadJob, UploadJobStatus
 from app.db.session import get_sync_db
 from app.services.ingestion_service import IngestionService
+from app.services.redis_publisher import publish_ws_event
 from app.services.storage_service import StorageService
 from app.workers.celery_app import celery_app
 
@@ -39,11 +40,8 @@ def ingest_dicom_instance(
     logger.info("ingest_started", job_id=job_id, object_key=object_key)
 
     try:
-        _set_job_status(job_id, UploadJobStatus.EXTRACTING_METADATA)
-
         with get_sync_db() as db:
             service = IngestionService(db, storage, settings)
-            _set_job_status(job_id, UploadJobStatus.STORING)
             study_id = service.ingest(object_key, owner_id, file_size_bytes)
             db.execute(
                 update(UploadJob).where(UploadJob.id == uuid.UUID(job_id)).values(study_id=study_id)
@@ -57,6 +55,11 @@ def ingest_dicom_instance(
             processed_bytes=file_size_bytes,
         )
         logger.info("ingest_completed", job_id=job_id, object_key=object_key)
+        publish_ws_event(
+            owner_id,
+            "upload.completed",
+            {"job_id": job_id, "study_id": str(study_id)},
+        )
         return {"job_id": job_id, "status": "completed"}
 
     except Exception as exc:
@@ -67,12 +70,20 @@ def ingest_dicom_instance(
             failed_files=1,
             errors=[{"error": str(exc), "object_key": object_key}],
         )
+        # Only notify the user after the final retry — earlier failures may still
+        # succeed on the next attempt.
+        if self.request.retries >= self.max_retries:
+            publish_ws_event(
+                owner_id,
+                "upload.failed",
+                {"job_id": job_id, "error": str(exc)},
+            )
         raise self.retry(exc=exc) from exc
 
 
 def _set_job_status(
     job_id: str,
-    status: str,
+    status: UploadJobStatus,
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
     processed_files: int | None = None,

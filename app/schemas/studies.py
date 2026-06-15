@@ -5,8 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from app.schemas.shares import ShareSourceDto
 
 
 class SeriesResponse(BaseModel):
@@ -72,6 +76,12 @@ class StudyResponse(BaseModel):
     storage_path: str
     created_at: datetime
     updated_at: datetime
+    # Populated by the studies endpoint when the caller is *not* the owner —
+    # carries the share row + grantor + permission so the frontend's sidebar
+    # can render the "Shared by Dr X" subtitle and the viewer can gate write
+    # actions on permission.  None for owned studies.
+    # Forward ref resolved by ``StudyResponse.model_rebuild`` in shares.py.
+    share_source: ShareSourceDto | None = None
 
 
 class StudyListResponse(BaseModel):
@@ -79,3 +89,31 @@ class StudyListResponse(BaseModel):
 
     items: list[StudyResponse]
     total: int
+
+
+# ── Aggregated viewer response ─────────────────────────────────────────────
+# Returned by GET /studies/{id}/viewer — replaces the N+1 chain of
+# /series → /instances → /presign/download with a single authenticated call.
+
+
+class ViewerInstanceResponse(InstanceResponse):
+    """Instance metadata + a ready-to-use presigned GET URL for the pixel data."""
+
+    download_url: str
+    expires_in: int
+
+
+class ViewerSeriesResponse(SeriesResponse):
+    """Series metadata with all its instances (and their download URLs) embedded."""
+
+    instances: list[ViewerInstanceResponse]
+
+
+class ViewerStudyResponse(StudyResponse):
+    """Full study payload: metadata + every series + every instance + presigned URLs.
+
+    Replaces the client-side N+1 loop (list series → per-series list instances →
+    per-instance presign/download) with one authenticated round-trip.
+    """
+
+    series: list[ViewerSeriesResponse]

@@ -38,9 +38,18 @@ async def list_friendships(
     user: CurrentUser,
     db: DBSession,
     status: Literal["pending", "accepted"] = Query("accepted"),
+    q: str | None = Query(default=None, description="Search peer by name or email"),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> FriendshipListResponse:
+    """List the caller's friendships filtered by status.
+
+    The share dialog's friend picker uses ``q`` (peer-name/email search) +
+    ``limit`` + ``offset`` to paginate; chat overview calls this without
+    those params to get the full accepted-friends list.
+    """
     service = ChatService(db, get_ws_hub())
-    items = await service.list_friendships(user.id, status)
+    items = await service.list_friendships(user.id, status, q=q, limit=limit, offset=offset)
     return FriendshipListResponse(items=items)
 
 

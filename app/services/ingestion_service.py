@@ -98,14 +98,17 @@ class IngestionService:
         owner_id: uuid.UUID,
         patient_id: uuid.UUID,
     ) -> tuple[Study, bool]:
-        """Returns (study, created)."""
-        study_uid = str(ds.StudyInstanceUID)
-        study = self._db.execute(
-            select(Study).where(Study.study_instance_uid == study_uid)
-        ).scalar_one_or_none()
+        """Returns (study, created).
 
-        if study is None:
-            study = Study(
+        Uses INSERT … ON CONFLICT DO NOTHING so that concurrent tasks uploading
+        files from the same study never race into a UniqueViolation.
+        Uniqueness is scoped to (study_instance_uid, owner_id) — different
+        owners may hold the same DICOM UID independently.
+        """
+        study_uid = str(ds.StudyInstanceUID)
+        stmt = (
+            pg_insert(Study)
+            .values(
                 owner_id=owner_id,
                 patient_id=patient_id,
                 study_instance_uid=study_uid,
@@ -119,25 +122,35 @@ class IngestionService:
                 storage_path=f"{owner_id}/{study_uid}/",
                 status=StudyStatus.PROCESSING,
             )
-            self._db.add(study)
-            self._db.flush()
-            logger.info("study_created", study_uid=study_uid)
-            return study, True
+            .on_conflict_do_nothing(index_elements=["study_instance_uid", "owner_id"])
+        )
+        result = self._db.execute(stmt)
+        created = result.rowcount > 0  # type: ignore[attr-defined]
 
-        return study, False
+        study = self._db.execute(
+            select(Study).where(
+                Study.study_instance_uid == study_uid,
+                Study.owner_id == owner_id,
+            )
+        ).scalar_one()
+
+        if created:
+            logger.info("study_created", study_uid=study_uid)
+        return study, created
 
     def _upsert_series(self, ds: Dataset, study_id: uuid.UUID) -> tuple[Series, bool]:
-        """Returns (series, created)."""
+        """Returns (series, created).
+
+        Uniqueness is scoped to (series_instance_uid, study_id); since study_id
+        is owner-scoped, this naturally partitions series per owner.
+        """
         series_uid = str(ds.SeriesInstanceUID)
-        series = self._db.execute(
-            select(Series).where(Series.series_instance_uid == series_uid)
-        ).scalar_one_or_none()
+        ps = getattr(ds, "PixelSpacing", None)
+        pixel_spacing = "\\".join(str(v) for v in ps) if ps else None
 
-        if series is None:
-            ps = getattr(ds, "PixelSpacing", None)
-            pixel_spacing = "\\".join(str(v) for v in ps) if ps else None
-
-            series = Series(
+        stmt = (
+            pg_insert(Series)
+            .values(
                 study_id=study_id,
                 series_instance_uid=series_uid,
                 series_number=int(sn) if (sn := getattr(ds, "SeriesNumber", None)) is not None else None,
@@ -151,12 +164,21 @@ class IngestionService:
                 pixel_spacing=pixel_spacing,
                 storage_path=f"{study_id}/{series_uid}/",
             )
-            self._db.add(series)
-            self._db.flush()
-            logger.info("series_created", series_uid=series_uid)
-            return series, True
+            .on_conflict_do_nothing(index_elements=["series_instance_uid", "study_id"])
+        )
+        result = self._db.execute(stmt)
+        created = result.rowcount > 0  # type: ignore[attr-defined]
 
-        return series, False
+        series = self._db.execute(
+            select(Series).where(
+                Series.series_instance_uid == series_uid,
+                Series.study_id == study_id,
+            )
+        ).scalar_one()
+
+        if created:
+            logger.info("series_created", series_uid=series_uid)
+        return series, created
 
     def _insert_instance_if_new(
         self,
@@ -165,10 +187,17 @@ class IngestionService:
         object_key: str,
         file_size_bytes: int,
     ) -> Instance | None:
-        """Returns None if the SOPInstanceUID already exists (idempotent re-delivery)."""
+        """Returns None if the instance already exists for this series (idempotent re-delivery).
+
+        Uniqueness is scoped to (sop_instance_uid, series_id) so that two
+        owners can hold instances with the same SOP UID in their own series.
+        """
         sop_uid = str(ds.SOPInstanceUID)
         existing = self._db.execute(
-            select(Instance.id).where(Instance.sop_instance_uid == sop_uid)
+            select(Instance.id).where(
+                Instance.sop_instance_uid == sop_uid,
+                Instance.series_id == series_id,
+            )
         ).scalar_one_or_none()
         if existing is not None:
             logger.info("instance_already_exists", sop_uid=sop_uid)

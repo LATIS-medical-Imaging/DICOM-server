@@ -6,6 +6,9 @@ isolated instances without import-time side effects leaking across them.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import uuid as _uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -20,12 +23,44 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
-from app.core.redis import close_redis
+from app.core.redis import close_redis, get_redis
 from app.db.session import dispose_engine
 from app.middleware.request_id import RequestIDMiddleware
 from app.services.storage_service import StorageService
+from app.services.ws_hub import get_ws_hub
 
 logger = get_logger(__name__)
+
+_WS_CHANNEL = "ws:notifications"
+
+
+async def _redis_ws_forwarder() -> None:
+    """Subscribe to ``ws:notifications`` and forward each message to WebSocketHub.
+
+    Runs as a background asyncio task for the lifetime of the FastAPI process.
+    Celery workers publish upload (and any future cross-process) WS events to
+    this channel; we bridge them into the in-process WebSocketHub so connected
+    browser clients receive them instantly without polling.
+    """
+    redis = await get_redis()
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(_WS_CHANNEL)
+    logger.info("redis_ws_forwarder_started", channel=_WS_CHANNEL)
+    try:
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                payload = json.loads(message["data"])
+                user_id = _uuid.UUID(payload["user_id"])
+                envelope = {"type": payload["type"], "data": payload["data"]}
+                await get_ws_hub().deliver(user_id, envelope)
+            except Exception as exc:
+                logger.warning("redis_ws_forward_error", error=str(exc))
+    except asyncio.CancelledError:
+        await pubsub.unsubscribe(_WS_CHANNEL)
+        logger.info("redis_ws_forwarder_stopped")
+        raise
 
 
 @asynccontextmanager
@@ -44,9 +79,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.warning("storage_init_failed", error=str(exc))
 
+    # Bridge Celery → WebSocket: forward Redis pub/sub events to connected clients.
+    forwarder = asyncio.create_task(_redis_ws_forwarder())
+
     try:
         yield
     finally:
+        forwarder.cancel()
+        await asyncio.gather(forwarder, return_exceptions=True)
         logger.info("app_shutdown")
         await dispose_engine()
         await close_redis()
