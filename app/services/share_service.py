@@ -50,6 +50,7 @@ from app.schemas.shares import (
     ShareTargetSummary,
     ShareTargetTypeLiteral,
 )
+from app.services.cache_service import CacheService
 from app.services.ws_hub import WebSocketHub
 
 
@@ -58,9 +59,15 @@ def _canonical_pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
 
 
 class ShareService:
-    def __init__(self, db: AsyncSession, hub: WebSocketHub) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        hub: WebSocketHub,
+        cache: CacheService | None = None,
+    ) -> None:
         self._db = db
         self._hub = hub
+        self._cache = cache
 
     # ── Create ──────────────────────────────────────────────────────────
 
@@ -197,6 +204,12 @@ class ShareService:
         }
         await self._hub.deliver(share.grantee_id, {"type": "share.accepted", "data": payload})
         await self._hub.deliver(share.grantor_id, {"type": "share.accepted", "data": payload})
+
+        # Bust study list caches — the grantee's sidebar now has a new study;
+        # the grantor's list may show a pending→active share status change.
+        if self._cache is not None:
+            await self._cache.invalidate_study_list(share.grantee_id, share.grantor_id)
+
         return response
 
     # ── Revoke / dismiss ────────────────────────────────────────────────
@@ -244,10 +257,18 @@ class ShareService:
         await self._db.commit()
 
         by_role: Literal["grantor", "grantee"] = "grantor" if is_grantor else "grantee"
+        affected_user_ids: set[uuid.UUID] = set()
         for s in to_revoke:
             payload = {"share_id": str(s.id), "by_role": by_role}
             await self._hub.deliver(s.grantor_id, {"type": "share.removed", "data": payload})
             await self._hub.deliver(s.grantee_id, {"type": "share.removed", "data": payload})
+            affected_user_ids.add(s.grantor_id)
+            affected_user_ids.add(s.grantee_id)
+
+        # Bust every affected user's study list — revoking removes the study
+        # from the grantee's sidebar and may update share status for the grantor.
+        if self._cache is not None and affected_user_ids:
+            await self._cache.invalidate_study_list(*affected_user_ids)
 
     # ── Listing ─────────────────────────────────────────────────────────
 
@@ -327,11 +348,19 @@ class ShareService:
         caller_id: uuid.UUID,
         study_id: uuid.UUID,
     ) -> Share | None:
-        """Return the most-permissive active share row on ``study_id`` for
-        ``caller_id``, or None.  Used when building ``StudyResponse.share_source``
-        so the frontend can show the grantor name + permission badge."""
+        """Return the most-permissive active share row that grants ``caller_id``
+        access to ``study_id``, or None.
+
+        Checks both study-level shares (Share.study_id = study_id) and
+        series-level shares (Share.series_id → Series.study_id = study_id) so
+        that the frontend's ``share_source`` field — which drives the
+        "Shared by Dr X · Permission" sidebar label and the save-button gate —
+        is populated correctly regardless of how granular the share was.
+        """
         now = datetime.now(UTC)
-        result = await self._db.execute(
+
+        # Study-level shares — direct grant on the whole study.
+        study_result = await self._db.execute(
             select(Share).where(
                 Share.grantee_id == caller_id,
                 Share.study_id == study_id,
@@ -339,9 +368,28 @@ class ShareService:
                 or_(Share.expires_at.is_(None), Share.expires_at > now),
             )
         )
-        shares = list(result.scalars().all())
+        shares: list[Share] = list(study_result.scalars().all())
+
+        # Series-level shares — grant on an individual series inside the study.
+        # Only consider original series (parent_series_id IS NULL) — phases are
+        # private to their creator and not shareable targets.
+        series_result = await self._db.execute(
+            select(Share)
+            .join(Series, Share.series_id == Series.id)
+            .where(
+                Share.grantee_id == caller_id,
+                Series.study_id == study_id,
+                Series.parent_series_id.is_(None),
+                Share.status == ShareStatus.ACTIVE,
+                or_(Share.expires_at.is_(None), Share.expires_at > now),
+            )
+        )
+        shares.extend(series_result.scalars().all())
+
         if not shares:
             return None
+        # Return the most permissive share so the UI shows the highest
+        # capability the user has on any part of this study.
         return max(shares, key=lambda s: SharePermission.rank(s.permission))
 
     # ── Internals ───────────────────────────────────────────────────────

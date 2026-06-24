@@ -22,21 +22,26 @@ logger = get_logger(__name__)
 _WS_CHANNEL = "ws:notifications"
 
 
+def _sync_redis() -> redis.Redis:
+    """Create a short-lived synchronous Redis client for Celery tasks."""
+    settings = get_settings()
+    return redis.Redis(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        db=settings.redis_db,
+        password=settings.redis_password or None,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+
+
 def publish_ws_event(user_id: str, event_type: str, data: dict[str, Any]) -> None:
     """Publish a WS envelope to the Redis pub/sub bridge channel.
 
     Best-effort — never raises; a failure here must not affect the Celery task.
     """
     try:
-        settings = get_settings()
-        client = redis.Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            db=settings.redis_db,
-            password=settings.redis_password or None,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
+        client = _sync_redis()
         payload = json.dumps({"user_id": user_id, "type": event_type, "data": data})
         client.publish(_WS_CHANNEL, payload)
         client.close()
@@ -47,3 +52,19 @@ def publish_ws_event(user_id: str, event_type: str, data: dict[str, Any]) -> Non
             user_id=user_id,
             error=str(exc),
         )
+
+
+def invalidate_cache_keys(*keys: str) -> None:
+    """Delete one or more Redis cache keys synchronously.
+
+    Best-effort — never raises; a failure here must not affect the Celery task.
+    Called from Celery tasks after ingestion to bust stale caches.
+    """
+    if not keys:
+        return
+    try:
+        client = _sync_redis()
+        client.delete(*keys)
+        client.close()
+    except Exception as exc:
+        logger.warning("cache_invalidate_sync_error", keys=keys, error=str(exc))

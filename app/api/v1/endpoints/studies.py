@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from app.api.deps import CurrentUser, DBSession, SettingsDep, StorageDep
+from app.api.deps import CacheDep, CurrentUser, DBSession, SettingsDep, StorageDep
 from app.core.exceptions import NotFoundError
 from app.db.models.study import Study
 from app.db.models.user import User
@@ -66,9 +66,16 @@ async def _serialise_study(
     response_model=StudyListResponse,
     summary="List studies visible to the authenticated user (owned + shared)",
 )
-async def list_studies(db: DBSession, user: CurrentUser) -> StudyListResponse:
+async def list_studies(db: DBSession, user: CurrentUser, cache: CacheDep) -> StudyListResponse:
+    # Cache hit — deserialise directly without touching the DB.
+    if cached := await cache.get_study_list(user.id):
+        items = [StudyResponse.model_validate(d) for d in cached]
+        return StudyListResponse(items=items, total=len(items))
+
     studies, total = await StudyService(db).list_visible(user.id)
     items = [await _serialise_study(db, s, user.id) for s in studies]
+
+    await cache.set_study_list(user.id, [i.model_dump(mode="json") for i in items])
     return StudyListResponse(items=items, total=total)
 
 
@@ -91,11 +98,24 @@ async def list_series(
     study_id: uuid.UUID,
     db: DBSession,
     user: CurrentUser,
+    cache: CacheDep,
 ) -> list[SeriesResponse]:
     service = StudyService(db)
-    await service.get_visible_study(study_id, user.id)  # 404 if not visible
+    study = await service.get_visible_study(study_id, user.id)  # 404 if not visible
+
+    # Series cache is only safe for study owners — non-owners may receive
+    # a share-filtered subset, so their requests fall through to the DB.
+    is_owner = study.owner_id == user.id
+    if is_owner:
+        if cached := await cache.get_series_list(study_id):
+            return [SeriesResponse.model_validate(d) for d in cached]
+
     series = await service.list_series(study_id, viewer_id=user.id)
-    return [SeriesResponse.model_validate(s) for s in series]
+    result = [SeriesResponse.model_validate(s) for s in series]
+
+    if is_owner:
+        await cache.set_series_list(study_id, [r.model_dump(mode="json") for r in result])
+    return result
 
 
 @router.get(
@@ -110,6 +130,7 @@ async def list_instances(
     user: CurrentUser,
     storage: StorageDep,
     settings: SettingsDep,
+    cache: CacheDep,
 ) -> list[InstanceResponse]:
     """Return the ordered instance stack.
 
@@ -130,9 +151,18 @@ async def list_instances(
     if series.parent_series_id is not None and series.owner_id != user.id:
         raise NotFoundError("Series not found.")
 
+    is_original = series.parent_series_id is None
+    if is_original:
+        if cached := await cache.get_instances(series_id):
+            return [InstanceResponse.model_validate(d) for d in cached]
+
     phases = PhaseService(db, storage, settings)
     instances = await phases.list_instances_rendered(series)
-    return [InstanceResponse.model_validate(i) for i in instances]
+    result = [InstanceResponse.model_validate(i) for i in instances]
+
+    if is_original:
+        await cache.set_instances(series_id, [r.model_dump(mode="json") for r in result])
+    return result
 
 
 @router.get(
@@ -146,6 +176,7 @@ async def get_study_for_viewer(
     user: CurrentUser,
     storage: StorageDep,
     settings: SettingsDep,
+    cache: CacheDep,
 ) -> ViewerStudyResponse:
     """Aggregated viewer payload — replaces the N+1 call chain.
 
@@ -166,16 +197,20 @@ async def get_study_for_viewer(
     viewer_series: list[ViewerSeriesResponse] = []
     for series in all_series:
         instances = await phases.list_instances_rendered(series)
-        viewer_instances = [
-            ViewerInstanceResponse(
-                **InstanceResponse.model_validate(inst).model_dump(),
-                download_url=storage.presigned_get_url(
-                    bucket, inst.file_path, expires_seconds=expires
-                ),
-                expires_in=expires,
+        viewer_instances: list[ViewerInstanceResponse] = []
+        for inst in instances:
+            # Check presign cache to avoid a MinIO HMAC-sign call per instance.
+            url = await cache.get_presign(inst.file_path)
+            if url is None:
+                url = storage.presigned_get_url(bucket, inst.file_path, expires_seconds=expires)
+                await cache.set_presign(inst.file_path, url, expires)
+            viewer_instances.append(
+                ViewerInstanceResponse(
+                    **InstanceResponse.model_validate(inst).model_dump(),
+                    download_url=url,
+                    expires_in=expires,
+                )
             )
-            for inst in instances
-        ]
         viewer_series.append(
             ViewerSeriesResponse(
                 **SeriesResponse.model_validate(series).model_dump(),
@@ -199,6 +234,7 @@ async def delete_series(
     series_id: uuid.UUID,
     db: DBSession,
     user: CurrentUser,
+    cache: CacheDep,
 ) -> None:
     service = StudyService(db)
     study = await service.get_visible_study(study_id, user.id)
@@ -218,3 +254,10 @@ async def delete_series(
             raise NotFoundError("Series not found.")
 
     await service.delete_series(series)
+
+    # Invalidate after successful deletion.  The study list changes because
+    # total_series_count / total_instance_count on the study row may be
+    # updated; series and instance lists are now stale.
+    await cache.invalidate_series_list(study_id)
+    await cache.invalidate_instances(series_id)
+    await cache.invalidate_study_list(study.owner_id)

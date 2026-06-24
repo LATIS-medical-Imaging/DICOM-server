@@ -12,7 +12,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CacheDep, CurrentUser, DBSession
 from app.schemas.shares import (
     CreateShareRequest,
     ShareListResponse,
@@ -22,10 +22,6 @@ from app.services.share_service import ShareService
 from app.services.ws_hub import get_ws_hub
 
 router = APIRouter()
-
-
-def _service(db: DBSession) -> ShareService:
-    return ShareService(db, get_ws_hub())
 
 
 @router.post(
@@ -39,7 +35,7 @@ async def create_shares(
     user: CurrentUser,
     db: DBSession,
 ) -> ShareListResponse:
-    items = await _service(db).create_shares(user.id, payload)
+    items = await ShareService(db, get_ws_hub()).create_shares(user.id, payload)
     return ShareListResponse(items=items, total=len(items))
 
 
@@ -57,7 +53,7 @@ async def list_incoming(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> ShareListResponse:
-    return await _service(db).list_incoming(user.id, share_status, limit, offset)
+    return await ShareService(db, get_ws_hub()).list_incoming(user.id, share_status, limit, offset)
 
 
 @router.get(
@@ -74,7 +70,7 @@ async def list_outgoing(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> ShareListResponse:
-    return await _service(db).list_outgoing(user.id, share_status, limit, offset)
+    return await ShareService(db, get_ws_hub()).list_outgoing(user.id, share_status, limit, offset)
 
 
 @router.post(
@@ -86,9 +82,10 @@ async def accept_share(
     share_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
+    cache: CacheDep,
 ) -> ShareResponse:
     """Idempotent — returns 200 if the share is already ACTIVE."""
-    return await _service(db).accept_share(user.id, share_id)
+    return await ShareService(db, get_ws_hub(), cache).accept_share(user.id, share_id)
 
 
 @router.delete(
@@ -100,7 +97,8 @@ async def revoke_share(
     share_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
+    cache: CacheDep,
 ) -> None:
     """Cascades REVOKED to every descendant in the ``parent_share_id`` tree
     so re-shares lose access in the same transaction."""
-    await _service(db).revoke_share(user.id, share_id)
+    await ShareService(db, get_ws_hub(), cache).revoke_share(user.id, share_id)

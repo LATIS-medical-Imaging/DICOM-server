@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import AuthenticationError, PermissionDeniedError
+from app.core.redis import get_redis
 from app.core.security import TokenType, decode_token
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
+from app.services.cache_service import CacheService
 from app.services.storage_service import StorageService
 
 # auto_error=False so we raise AuthenticationError (uniform envelope) instead of
@@ -81,9 +83,14 @@ def get_user_agent(request: Request) -> str | None:
     return request.headers.get("user-agent")
 
 
+async def get_cache() -> CacheService:
+    return CacheService(await get_redis())
+
+
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 StorageDep = Annotated[StorageService, Depends(get_storage)]
+CacheDep = Annotated[CacheService, Depends(get_cache)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentAdmin = Annotated[User, Depends(require_role(UserRole.ADMIN))]
 ClientIP = Annotated[str | None, Depends(get_client_ip)]
