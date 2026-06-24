@@ -13,7 +13,7 @@ from app.core.logging import get_logger
 from app.db.models.upload_job import UploadJob, UploadJobStatus
 from app.db.session import get_sync_db
 from app.services.ingestion_service import IngestionService
-from app.services.redis_publisher import publish_ws_event
+from app.services.redis_publisher import invalidate_cache_keys, publish_ws_event
 from app.services.storage_service import StorageService
 from app.workers.celery_app import celery_app
 
@@ -42,7 +42,7 @@ def ingest_dicom_instance(
     try:
         with get_sync_db() as db:
             service = IngestionService(db, storage, settings)
-            study_id = service.ingest(object_key, owner_id, file_size_bytes)
+            study_id, series_id = service.ingest(object_key, owner_id, file_size_bytes)
             db.execute(
                 update(UploadJob).where(UploadJob.id == uuid.UUID(job_id)).values(study_id=study_id)
             )
@@ -59,6 +59,14 @@ def ingest_dicom_instance(
             owner_id,
             "upload.completed",
             {"job_id": job_id, "study_id": str(study_id)},
+        )
+        # Invalidate caches that are now stale: the study list for this owner
+        # has a new study/series/instance; the series and instance lists for
+        # the affected study and series are also out of date.
+        invalidate_cache_keys(
+            f"study_list:{owner_id}",
+            f"series_list:{study_id}",
+            f"instances:{series_id}",
         )
         return {"job_id": job_id, "status": "completed"}
 

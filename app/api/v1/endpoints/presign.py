@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, status
 from minio.error import S3Error
 
-from app.api.deps import CurrentUser, SettingsDep, StorageDep
+from app.api.deps import CacheDep, CurrentUser, SettingsDep, StorageDep
 from app.schemas.dicom import (
     PresignedDownloadResponse,
     PresignedUploadBatchRequest,
@@ -114,14 +114,23 @@ def presign_upload_batch(
     status_code=status.HTTP_200_OK,
     summary="Get a presigned GET URL for direct-from-MinIO download",
 )
-def presign_download(
+async def presign_download(
     storage: StorageDep,
     settings: SettingsDep,
+    cache: CacheDep,
     user: CurrentUser,  # presence of valid Bearer is enough — narrower checks live in /studies
     object_key: str = Query(..., description="MinIO object key returned by presign/upload."),
 ) -> PresignedDownloadResponse:
     bucket = settings.minio_bucket_dicom
     expires = settings.minio_presigned_url_expire_seconds
+
+    # Cache hit: skip the object_exists check and the MinIO HMAC-sign call.
+    if cached_url := await cache.get_presign(object_key):
+        return PresignedDownloadResponse(
+            download_url=cached_url,
+            object_key=object_key,
+            expires_in=expires,
+        )
 
     if not storage.object_exists(bucket, object_key):
         raise HTTPException(
@@ -137,6 +146,7 @@ def presign_download(
             detail=f"Object storage unavailable: {exc}",
         ) from exc
 
+    await cache.set_presign(object_key, download_url, expires)
     return PresignedDownloadResponse(
         download_url=download_url,
         object_key=object_key,

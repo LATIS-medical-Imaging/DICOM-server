@@ -33,8 +33,14 @@ class IngestionService:
         self._storage = storage
         self._settings = settings
 
-    def ingest(self, object_key: str, owner_id: str, file_size_bytes: int) -> uuid.UUID:
-        """Orchestrates the full ingestion pipeline. Returns the study UUID."""
+    def ingest(
+        self, object_key: str, owner_id: str, file_size_bytes: int
+    ) -> tuple[uuid.UUID, uuid.UUID]:
+        """Orchestrates the full ingestion pipeline.
+
+        Returns ``(study_id, series_id)`` so the Celery task can invalidate
+        the matching cache keys without an extra DB round-trip.
+        """
         ds = self._download_and_parse(object_key)
 
         patient = self._upsert_patient(ds, uuid.UUID(owner_id))
@@ -46,7 +52,7 @@ class IngestionService:
             self._increment_counters(series.id, study.id, file_size_bytes, series_created)
 
         self._generate_thumbnail(ds, object_key)
-        return study.id
+        return study.id, series.id
 
     def _download_and_parse(self, object_key: str) -> Dataset:
         response = self._storage.client.get_object(self._settings.minio_bucket_dicom, object_key)
