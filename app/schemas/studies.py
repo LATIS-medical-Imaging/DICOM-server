@@ -30,6 +30,10 @@ class SeriesResponse(BaseModel):
     size_bytes: int
     storage_path: str
     created_at: datetime
+    # Null when the caller owns the series. Set from the share that grants
+    # access — series-level if there is one, otherwise the parent study's.
+    # Forward ref resolved by ``SeriesResponse.model_rebuild`` in shares.py.
+    share_source: ShareSourceDto | None = None
 
 
 class InstanceResponse(BaseModel):

@@ -131,7 +131,8 @@ class ShareSourceDto(BaseModel):
 # from chat.py).  Now that both modules are loaded, rebuild the model so
 # Pydantic can resolve the annotation.
 from app.schemas.chat import MessageResponse  # noqa: E402
-from app.schemas.studies import StudyResponse  # noqa: E402
+from app.schemas.studies import SeriesResponse, StudyResponse  # noqa: E402
 
 MessageResponse.model_rebuild()
 StudyResponse.model_rebuild()
+SeriesResponse.model_rebuild()

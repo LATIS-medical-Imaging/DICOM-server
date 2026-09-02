@@ -132,6 +132,8 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      # Downloaded segmentation checkpoints survive container restarts.
+      - model-cache:${DEEP_SEGMENTATION_MODEL_CACHE_DIR:-/var/cache/medical-std/models}
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,6 +182,7 @@ volumes:
   redis-data:
   minio-data:
   pgadmin-data:
+  model-cache:
 
 networks:
   backend:

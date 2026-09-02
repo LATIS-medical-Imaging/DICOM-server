@@ -153,7 +153,9 @@ class IngestionService:
             .values(
                 study_id=study_id,
                 series_instance_uid=series_uid,
-                series_number=int(sn) if (sn := getattr(ds, "SeriesNumber", None)) is not None else None,
+                series_number=(
+                    int(sn) if (sn := getattr(ds, "SeriesNumber", None)) is not None else None
+                ),
                 modality=_tag(ds, "Modality", "OT"),
                 series_description=_tag(ds, "SeriesDescription") or None,
                 body_part_examined=_tag(ds, "BodyPartExamined") or None,

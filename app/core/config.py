@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     minio_presigned_url_expire_seconds: int = 3600
 
     # ------------------------------------------------------------------
+    # Deep segmentation (medical-image-std DeepSegmentationAlgorithm)
+    # ------------------------------------------------------------------
+    deep_segmentation_model_server_url: str = "http://mcdmodels.ptm.tn:555/"
+    deep_segmentation_model_cache_dir: str = "/var/cache/medical-std/models"
+    deep_segmentation_device: str = "cpu"
+
+    # ------------------------------------------------------------------
     # Celery
     # ------------------------------------------------------------------
     # When not explicitly set, these are derived from REDIS_HOST/PORT so that

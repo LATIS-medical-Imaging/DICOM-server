@@ -57,3 +57,55 @@ class ApplyFilterResponse(BaseModel):
     filter: FilterName
     expires_in: int
     cached: bool
+
+
+class SegmentationModelInfo(BaseModel):
+    """One checkpoint advertised by the remote model server."""
+
+    name: str
+    architecture: str
+    loss: str
+    patch_size: int
+    dataset: str
+    uses_clahe: bool
+
+
+class ApplySegmentationRequest(BaseModel):
+    """Body for `POST /processing/segmentation/apply`.
+
+    `model_name` is free-form rather than a `Literal` because the model set
+    is discovered from the model server at runtime, unlike the fixed
+    classical-filter list above. `threshold` / `min_lesion_area` override the
+    values embedded in the checkpoint's own config when set.
+    """
+
+    instance_id: uuid.UUID
+    model_name: str
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_lesion_area: int | None = Field(default=None, ge=1)
+    roi: ROI | None = None
+
+
+class LesionAnnotation(BaseModel):
+    """One detected lesion, as produced by `Annotation.to_dict()`.
+
+    Coordinates are in source-image pixel space; the viewer converts them to
+    Cornerstone world coordinates before drawing.
+    """
+
+    shape: Literal["RECTANGLE", "ELLIPSE", "POLYGON"]
+    coordinates: list[Any]
+    label: str
+    center: list[float]
+    bounding_box: list[int]
+    metadata: dict[str, Any]
+
+
+class ApplySegmentationResponse(BaseModel):
+    download_url: str
+    object_key: str
+    model_name: str
+    expires_in: int
+    cached: bool
+    lesion_count: int
+    annotations: list[LesionAnnotation]

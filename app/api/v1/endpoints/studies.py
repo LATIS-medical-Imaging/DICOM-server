@@ -13,6 +13,7 @@ from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser, DBSession, SettingsDep, StorageDep
 from app.core.exceptions import NotFoundError
+from app.db.models.series import Series
 from app.db.models.study import Study
 from app.db.models.user import User
 from app.schemas.chat import UserSearchResult
@@ -61,6 +62,34 @@ async def _serialise_study(
     return response
 
 
+async def _serialise_series(
+    db: DBSession,
+    series: Series,
+    study: Study,
+    user_id: uuid.UUID,
+) -> SeriesResponse:
+    """Serialise a Series, attaching the share that grants the caller access.
+
+    The study-level ``share_source`` alone isn't enough: a series can be
+    shared on its own, in which case the parent study carries no share row and
+    the viewer would fall back to read-only and lose the share id it needs to
+    revoke.
+    """
+    response = SeriesResponse.model_validate(series)
+    if study.owner_id != user_id:
+        share_service = ShareService(db, get_ws_hub())
+        share = await share_service.active_share_row_for_series(user_id, series)
+        if share is not None:
+            grantor = await db.get(User, share.grantor_id)
+            if grantor is not None:
+                response.share_source = ShareSourceDto(
+                    share_id=share.id,
+                    grantor=UserSearchResult.model_validate(grantor),
+                    permission=share.permission,
+                )
+    return response
+
+
 @router.get(
     "",
     response_model=StudyListResponse,
@@ -93,9 +122,9 @@ async def list_series(
     user: CurrentUser,
 ) -> list[SeriesResponse]:
     service = StudyService(db)
-    await service.get_visible_study(study_id, user.id)  # 404 if not visible
+    study = await service.get_visible_study(study_id, user.id)  # 404 if not visible
     series = await service.list_series(study_id, viewer_id=user.id)
-    return [SeriesResponse.model_validate(s) for s in series]
+    return [await _serialise_series(db, s, study, user.id) for s in series]
 
 
 @router.get(

@@ -46,7 +46,7 @@ dependencies = [
     "pillow>=11.0.0",
     "pylibjpeg>=2.0",
     "pylibjpeg-libjpeg>=2.1",
-    "medical-image-std",
+    "medical-image-std>=0.7.0",
 
     # HTTP client
     "httpx>=0.27.2",
@@ -88,7 +88,9 @@ ignore = ["E501"]  # line length handled by formatter
 [tool.black]
 line-length = 100
 target-version = ["py311"]
-exclude = "alembic/versions"
+# extend-exclude, not exclude — plain `exclude` replaces black's defaults, which
+# would send it walking .venv/ on a machine that has one.
+extend-exclude = "alembic/versions"
 
 [tool.mypy]
 python_version = "3.11"

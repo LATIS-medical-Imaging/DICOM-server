@@ -845,7 +845,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
-    { name = "medical-image-std" },
+    { name = "medical-image-std", specifier = ">=0.7.0" },
     { name = "minio", specifier = ">=7.2.9" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.14.0" },
     { name = "numpy", specifier = ">=1.26.0" },
@@ -1618,7 +1618,7 @@ wheels = [
 
 [[package]]
 name = "medical-image-std"
-version = "0.6.3"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -1629,13 +1629,14 @@ dependencies = [
     { name = "requests" },
     { name = "scikit-image" },
     { name = "scipy" },
+    { name = "segmentation-models-pytorch" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/c5/02d100259d0b99dd068912b26c0b0612ac90b30be34cc74189b5f47ade55/medical_image_std-0.6.3.tar.gz", hash = "sha256:d354bbf63af5dfacc52b5b9d22ec5633bad7a5f618b02a2d750d0882e676c515", size = 91755, upload-time = "2026-04-24T16:26:33.984Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/a1/6706d58109638f67f8c338954fc794edd8b15b655e8233c40a275fa2b30d/medical_image_std-0.7.0.tar.gz", hash = "sha256:a076ce0660eb2b819591bc592c2ef9b397a2cc5d5cfa81d590c88d2d6e5f4dec", size = 105795, upload-time = "2026-09-01T22:21:07.545Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/03/0631078fa045773a2bceaa21dfd04cacab70fd1bb48801771cfb999881a0/medical_image_std-0.6.3-py3-none-any.whl", hash = "sha256:07f35200c4dcf0cb67a1de8643cb401c1beac91faa522b0d84f9e603fceff1a4", size = 109307, upload-time = "2026-04-24T16:26:30.515Z" },
+    { url = "https://files.pythonhosted.org/packages/10/df/403a6e93e8779c83ce9f8576fa8b5987cb4206dc6ce8fd15b71be49c0b54/medical_image_std-0.7.0-py3-none-any.whl", hash = "sha256:898f037ebf8ef9fcb9991d6aa1d69e98e849344367116e393d3fd321977a30f4", size = 125405, upload-time = "2026-09-01T22:21:04.027Z" },
 ]
 
 [[package]]
@@ -2905,6 +2906,25 @@ wheels = [
 ]
 
 [[package]]
+name = "segmentation-models-pytorch"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "safetensors" },
+    { name = "timm" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/15/fa/d5a29d49240fb10bdead608b4d0c6805684a8f63b1f65863502be65b1ca4/segmentation_models_pytorch-0.5.0.tar.gz", hash = "sha256:cabba8aced6ef7bdcd6288dd9e1dc2840848aa819d539c455bd07aeceb2fdf96", size = 105150, upload-time = "2025-04-17T10:43:45.755Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/62/a50e5ac6191a498ad631e54df13d7e2d7eeb1325b15ee9ea1ee3ec065aaa/segmentation_models_pytorch-0.5.0-py3-none-any.whl", hash = "sha256:c34e09047771aa4dd8878b4f899e8125700cd1f8f7db16e58c37204154151a05", size = 154789, upload-time = "2025-04-17T10:43:43.668Z" },
+]
+
+[[package]]
 name = "setuptools"
 version = "81.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3065,6 +3085,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/66/0aef917d525767a40edebe088f8ed6a4417e6eb489c58f6805bfa872636b/tifffile-2026.5.15.tar.gz", hash = "sha256:ee4f3e07ee0d8ff4745a8c735ac2b72caa3173c7d6059b00fdc3ff492a0b635b", size = 429998, upload-time = "2026-05-15T20:04:55.896Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/6e/7d8850ff112f8f80d394ca45e89b975a3a43559d47af3137b767669b3294/tifffile-2026.5.15-py3-none-any.whl", hash = "sha256:6715515a53cabc0cefc5c9f13a0ae2c250e63e2ca784ce02d0b6c333810c2a17", size = 266665, upload-time = "2026-05-15T20:04:54.227Z" },
+]
+
+[[package]]
+name = "timm"
+version = "1.0.29"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/72/58b8363e22508418d5fac897ac68e2c33f01f84d9d471edc38cbb6523dc6/timm-1.0.29.tar.gz", hash = "sha256:1af8d12bb7e15c5f96e98d60b7b8319cd7f31730778bf1af58e912a7ce171576", size = 2497559, upload-time = "2026-08-28T15:07:31.007Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/b7/19267ec60740ef1899d265272bff3623f19fe7f7bf1022fb098766db2134/timm-1.0.29-py3-none-any.whl", hash = "sha256:4266486e355c9beb9432e689de580d09e2efe7fa92a9a79e76c03e7763eac724", size = 2633555, upload-time = "2026-08-28T15:07:29.348Z" },
 ]
 
 [[package]]

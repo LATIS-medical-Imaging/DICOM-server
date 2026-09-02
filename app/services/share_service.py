@@ -322,6 +322,37 @@ class ShareService:
             return None
         return max((s.permission for s in shares), key=SharePermission.rank)
 
+    async def active_share_row_for_series(
+        self,
+        caller_id: uuid.UUID,
+        series: Series,
+    ) -> Share | None:
+        """Most-permissive active share row covering ``series``, or None.
+
+        Considers the series's own share *and* the parent study's — a
+        study-level share covers every series in it. The study-only variant
+        below misses series-level grants entirely, which is why the viewer
+        needs this one to decide what the caller may do with a given series.
+        """
+        now = datetime.now(UTC)
+        result = await self._db.execute(
+            select(Share).where(
+                Share.grantee_id == caller_id,
+                or_(Share.series_id == series.id, Share.study_id == series.study_id),
+                Share.status == ShareStatus.ACTIVE,
+                or_(Share.expires_at.is_(None), Share.expires_at > now),
+            )
+        )
+        shares = list(result.scalars().all())
+        if not shares:
+            return None
+        # Rank by permission, then prefer the more specific (series-level) row
+        # so "remove from sidebar" revokes the grant that actually put it there.
+        return max(
+            shares,
+            key=lambda s: (SharePermission.rank(s.permission), s.series_id is not None),
+        )
+
     async def active_share_row_for_study(
         self,
         caller_id: uuid.UUID,

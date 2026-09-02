@@ -19,23 +19,24 @@ from typing import Any
 import numpy as np
 import pydicom
 from pydicom.uid import ExplicitVRLittleEndian
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.models.instance import Instance
 from app.schemas.processing import ROI
+from app.services.derived_pixels import (
+    DERIVED_PREFIX,
+    FilterError,
+    clamp_roi,
+    load_instance,
+    rescale_to_dtype,
+)
 from app.services.storage_service import StorageService
 
 logger = get_logger(__name__)
 
-
-_DERIVED_PREFIX = "derived"
-
-
-class FilterError(ValueError):
-    """Raised when a filter request is malformed (unknown filter, bad params)."""
+__all__ = ["FilterError", "ProcessingService"]
 
 
 class ProcessingService:
@@ -90,11 +91,7 @@ class ProcessingService:
         return derived_key, False
 
     async def _load_instance(self, instance_id: uuid.UUID) -> Instance:
-        result = await self._db.execute(select(Instance).where(Instance.id == instance_id))
-        instance = result.scalar_one_or_none()
-        if instance is None:
-            raise FilterError(f"Instance {instance_id} not found.")
-        return instance
+        return await load_instance(self._db, instance_id)
 
     @staticmethod
     def _derived_key(
@@ -115,7 +112,7 @@ class ProcessingService:
             {"params": params, "roi": roi_part}, sort_keys=True, separators=(",", ":")
         )
         digest = hashlib.sha256(f"{filter_name}|{normalized}".encode()).hexdigest()[:12]
-        return f"{prefix}/{_DERIVED_PREFIX}/{sop}--{filter_name}-{digest}.dcm"
+        return f"{prefix}/{DERIVED_PREFIX}/{sop}--{filter_name}-{digest}.dcm"
 
     def _run_filter(
         self,
@@ -144,14 +141,14 @@ class ProcessingService:
 
         if roi is None:
             processed = _apply_to_array(original, filter_name, params)
-            scaled = _rescale_to_dtype(processed, original.dtype)
+            scaled = rescale_to_dtype(processed, original.dtype)
         else:
-            y0, x0, y1, x1 = _clamp_roi(roi, original.shape)
+            y0, x0, y1, x1 = clamp_roi(roi, original.shape)
             crop = original[y0:y1, x0:x1]
             if crop.size == 0:
                 raise FilterError("ROI is empty after clamping to image bounds.")
             crop_processed = _apply_to_array(crop, filter_name, params)
-            crop_scaled = _rescale_to_dtype(crop_processed, original.dtype)
+            crop_scaled = rescale_to_dtype(crop_processed, original.dtype)
             scaled = original.copy()
             scaled[y0:y1, x0:x1] = crop_scaled
 
@@ -197,9 +194,29 @@ def _apply_to_array(
         "top_hat": lambda: TopHatAlgorithm(radius=int(params.get("radius", 4)), device="cpu").apply(
             src, out
         ),
-        "kmeans": lambda: KMeansAlgorithm(k=int(params.get("k", 2)), device="cpu").apply(src, out),
-        "fcm": lambda: FCMAlgorithm(c=int(params.get("c", 2)), device="cpu").apply(src, out),
-        "pfcm": lambda: PFCMAlgorithm(c=int(params.get("c", 2)), device="cpu").apply(src, out),
+        "kmeans": lambda: KMeansAlgorithm(
+            k=int(params.get("k", 2)),
+            max_iter=int(params.get("max_iter", 100)),
+            tol=float(params.get("tol", 1e-4)),
+            device="cpu",
+        ).apply(src, out),
+        "fcm": lambda: FCMAlgorithm(
+            c=int(params.get("c", 2)),
+            m=float(params.get("m", 2.0)),
+            max_iter=int(params.get("max_iter", 100)),
+            tol=float(params.get("tol", 1e-3)),
+            device="cpu",
+        ).apply(src, out),
+        "pfcm": lambda: PFCMAlgorithm(
+            c=int(params.get("c", 2)),
+            m=float(params.get("m", 2.0)),
+            eta=float(params.get("eta", 2.0)),
+            a=float(params.get("a", 1.0)),
+            b=float(params.get("b", 4.0)),
+            tau=float(params.get("tau", 0.04)),
+            max_iter=int(params.get("max_iter", 100)),
+            device="cpu",
+        ).apply(src, out),
         "febds": lambda: FebdsAlgorithm(
             method=str(params.get("method", "dog")), device="cpu"
         ).apply(src, out),
@@ -221,47 +238,3 @@ def _apply_to_array(
         raise FilterError(f"Filter '{filter_name}' produced no output.")
 
     return out.pixel_data.detach().cpu().numpy()
-
-
-def _clamp_roi(roi: ROI, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
-    """Clip an ROI to image bounds and return (y0, x0, y1, x1) for numpy slicing."""
-    rows, cols = shape[0], shape[1]
-    x0 = max(0, min(roi.x, cols))
-    y0 = max(0, min(roi.y, rows))
-    x1 = max(x0, min(roi.x + roi.width, cols))
-    y1 = max(y0, min(roi.y + roi.height, rows))
-    return y0, x0, y1, x1
-
-
-def _rescale_to_dtype(processed: np.ndarray, target_dtype: np.dtype) -> np.ndarray:
-    """Scale a float result back into the source's integer range.
-
-    Filters return float tensors; DICOM pixel data needs to match the
-    source dtype (typically uint16 for medical imaging). For binary
-    outputs (Otsu) we stretch {0,1} → full range so the result is still
-    visible at the source's W/L.
-    """
-    if processed.dtype == target_dtype:
-        return processed
-
-    if not np.issubdtype(target_dtype, np.integer):
-        # Keep float outputs as float32 if the source itself was float.
-        return processed.astype(target_dtype, copy=False)
-
-    info = np.iinfo(target_dtype)
-    p_min = float(processed.min())
-    p_max = float(processed.max())
-
-    # Always promote to float64 before arithmetic — the input may be uint8
-    # (e.g. BreastMask mask_only) and multiplying uint8 by int16.max overflows.
-    f = processed.astype(np.float64)
-
-    if p_max <= 1.0 and p_min >= 0.0:
-        # Binary / normalised output — stretch to full range.
-        scaled = f * info.max
-    else:
-        # Linear rescale preserves visual contrast across W/L presets.
-        span = p_max - p_min if p_max > p_min else 1.0
-        scaled = (f - p_min) / span * info.max
-
-    return np.clip(scaled, info.min, info.max).astype(target_dtype, copy=False)

@@ -22,8 +22,12 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY pyproject.toml README.md ./
+# torch AND torchvision must come from the same index: installing only torch
+# from the CPU index leaves torchvision to resolve from PyPI, and the resulting
+# CUDA-variant build cannot register its C++ ops against a +cpu torch
+# ("operator torchvision::nms does not exist" the moment smp/timm import it).
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
     && pip install "."
 
 # --- Dev stage: builder + dev extras (ruff, black, mypy, pytest). ----------
@@ -49,6 +53,12 @@ RUN apt-get update \
     && useradd  --system --uid 1001 --gid app --home-dir ${APP_HOME} app
 
 COPY --from=builder /opt/venv /opt/venv
+
+# Segmentation checkpoint cache. Created here (not just declared as a volume)
+# so Docker seeds the named volume with app ownership — the container runs as
+# uid 1001 and cannot mkdir inside a root-owned volume root.
+RUN mkdir -p /var/cache/medical-std/models \
+    && chown -R app:app /var/cache/medical-std
 
 WORKDIR ${APP_HOME}
 COPY --chown=app:app . .
