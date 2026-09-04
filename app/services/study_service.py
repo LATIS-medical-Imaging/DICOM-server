@@ -214,9 +214,11 @@ class StudyService:
 
     async def list_instances(self, series_id: uuid.UUID) -> list[Instance]:
         result = await self._db.execute(
-            select(Instance)
-            .where(Instance.series_id == series_id)
-            .order_by(Instance.instance_number)
+            select(Instance).where(Instance.series_id == series_id)
+            # InstanceNumber is absent from plenty of real files; without a
+            # tiebreaker those rows come back in whatever order Postgres
+            # happens to scan, so the stack reshuffles between loads.
+            .order_by(Instance.instance_number.nulls_last(), Instance.created_at, Instance.id)
         )
         return list(result.scalars().all())
 

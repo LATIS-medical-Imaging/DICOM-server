@@ -1,0 +1,62 @@
+# GPU overlay. Layer it over the base compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# or just `make up`, which applies it automatically when scripts/detect-gpu.sh
+# says the host can actually serve one.
+#
+# Two things are required and neither is enough alone:
+#   1. the container must be *given* the GPU (the `deploy.resources` block), and
+#   2. the image must contain a CUDA torch build (TORCH_INDEX_URL) — the
+#      default image ships torch+cpu and will happily ignore a passed-through
+#      GPU.
+# With both in place DEEP_SEGMENTATION_DEVICE=auto resolves to cuda; without
+# either it resolves to cpu, so this overlay is safe to apply speculatively.
+
+services:
+  api:
+    build:
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+    image: dicom-server:gpu
+    environment:
+      DEEP_SEGMENTATION_DEVICE: ${DEEP_SEGMENTATION_DEVICE:-auto}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # This is where inference actually runs now, so it is the service that most
+  # needs the device.
+  pixel-worker:
+    image: dicom-server:gpu
+    environment:
+      DEEP_SEGMENTATION_DEVICE: ${DEEP_SEGMENTATION_DEVICE:-auto}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  worker:
+    image: dicom-server:gpu
+    environment:
+      DEEP_SEGMENTATION_DEVICE: ${DEEP_SEGMENTATION_DEVICE:-auto}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

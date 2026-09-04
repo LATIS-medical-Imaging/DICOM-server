@@ -2,7 +2,7 @@ DC      ?= docker compose
 RUN     := $(DC) --profile tools run --rm tools
 RUN_TTY := $(DC) --profile tools run --rm -T tools
 
-.PHONY: help build-tools shell check fix lint format typecheck test cov ci up down logs
+.PHONY: help build-tools shell check fix lint format typecheck test cov ci up up-cpu up-gpu down logs gpu-check
 
 help:
 	@echo "All targets run inside Docker - no local Python required."
@@ -18,7 +18,10 @@ help:
 	@echo "  make cov       - Pytest with coverage"
 	@echo ""
 	@echo "Stack management:"
-	@echo "  make up        - Start the full stack (api, worker, db, redis, minio)"
+	@echo "  make up        - Start the full stack (auto-detects GPU, falls back to CPU)"
+	@echo "  make up-gpu    - Force the GPU overlay (CUDA torch wheels)"
+	@echo "  make up-cpu    - Force CPU only, ignoring any GPU"
+	@echo "  make gpu-check - Report whether Docker can use a GPU here"
 	@echo "  make down      - Stop the stack"
 	@echo "  make logs      - Tail api+worker logs"
 	@echo "  make shell     - Open a bash shell in the tools container"
@@ -55,8 +58,23 @@ cov:
 ci: check test
 	@echo "Local CI mirror passed - safe to push."
 
+# GPU when the host has one and the NVIDIA container runtime is installed,
+# CPU otherwise. The overlay is additive, so the fallback is the plain file.
 up:
-	$(DC) up -d --build
+	@FLAGS="$$(./scripts/detect-gpu.sh || true)"; \
+	$(DC) $$FLAGS up -d --build
+
+up-gpu:
+	$(DC) -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+up-cpu:
+	$(DC) -f docker-compose.yml up -d --build
+
+# Prints what the container actually resolved, not what the host has.
+gpu-check:
+	@./scripts/detect-gpu.sh >/dev/null || true
+	@$(DC) exec -T api python -c "from app.core.config import get_settings; from app.core.torch_runtime import device_report; print(device_report(get_settings().deep_segmentation_device))" \
+		|| echo "api container not running - start it with 'make up' first"
 
 down:
 	$(DC) down

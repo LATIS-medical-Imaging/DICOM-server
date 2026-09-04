@@ -1,17 +1,24 @@
-"""In-process WebSocket connection registry — single API replica, for now.
+"""WebSocket connection registry, bridged across processes by Redis pub/sub.
 
 The hub maps ``user_id`` to the set of live WebSocket connections that
 identified as that user.  A single user can have several tabs open at once, so
 delivery fans out to all of them.
 
-For horizontal scaling we will eventually wrap this in a Redis pub/sub bridge,
-but the public surface (``register`` / ``unregister`` / ``deliver``) is what
-callers depend on — that won't change.
+The socket set is necessarily per-process — a socket lives in the worker that
+accepted it — so ``deliver`` publishes to the ``ws:notifications`` channel
+instead of writing to local sockets directly, and every process forwards what
+it reads there into its own ``deliver_local``.  That is what makes running the
+API with more than one uvicorn worker safe: without it, a chat message sent
+through worker 1 would never reach a recipient whose tab is held by worker 2.
+
+The public surface (``register`` / ``unregister`` / ``deliver``) is unchanged,
+exactly as this module always promised.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections import defaultdict
 from typing import Any
@@ -19,8 +26,11 @@ from typing import Any
 from fastapi import WebSocket
 
 from app.core.logging import get_logger
+from app.core.redis import get_redis
 
 logger = get_logger(__name__)
+
+WS_CHANNEL = "ws:notifications"
 
 
 class WebSocketHub:
@@ -46,7 +56,27 @@ class WebSocketHub:
         logger.info("ws_unregistered", user_id=str(user_id))
 
     async def deliver(self, user_id: uuid.UUID, envelope: dict[str, Any]) -> int:
-        """Send ``envelope`` to every open socket for ``user_id``.
+        """Fan ``envelope`` out to every process holding a socket for ``user_id``.
+
+        Publishes to Redis; each process's forwarder calls `deliver_local`,
+        including this one — so the local sockets are served by the same path as
+        the remote ones and never get the frame twice. Returns the number of
+        subscribers reached, or the local delivery count when Redis is down.
+        """
+        try:
+            client = await get_redis()
+            payload = json.dumps(
+                {"user_id": str(user_id), "type": envelope["type"], "data": envelope["data"]}
+            )
+            return int(await client.publish(WS_CHANNEL, payload))
+        except Exception as exc:
+            # A single-replica deployment still works without Redis; falling
+            # back keeps chat alive instead of silently dropping frames.
+            logger.warning("ws_publish_failed_delivering_locally", error=str(exc))
+            return await self.deliver_local(user_id, envelope)
+
+    async def deliver_local(self, user_id: uuid.UUID, envelope: dict[str, Any]) -> int:
+        """Send ``envelope`` to sockets held by *this* process.
 
         Returns the number of sockets that actually accepted the frame — a
         useful debug signal but never raised: a closed socket on send is just a

@@ -193,3 +193,91 @@ make build-tools   # one-time (rerun after pyproject.toml changes)
 make ci            # mirrors GitHub CI: lint + format + types + tests
 make fix           # auto-repair lint + formatting issues
 ```
+
+---
+
+## Running the Full Platform
+
+The platform is two repositories: this API and the Angular viewer
+(`DICOM-viewer`, served separately). Bring the backend up first — the viewer
+expects it on `http://localhost:8000`.
+
+### 1. Backend
+
+```bash
+cd DICOM-server
+cp .env.example .env          # set JWT_SECRET_KEY and the ADMIN_BOOTSTRAP_* vars
+
+make up                       # builds and starts every service
+docker compose exec api alembic upgrade head
+docker compose exec api python -m app.cli.seed_admin
+```
+
+`make up` probes the host and starts the GPU-enabled stack when there is a GPU
+*and* the NVIDIA container runtime; otherwise it starts the CPU stack. Force
+either with `make up-gpu` / `make up-cpu`, and check what the container actually
+resolved with `make gpu-check` — the host having a GPU is not the same as the
+container getting one.
+
+Services started:
+
+| Container            | Role                                                    |
+|----------------------|---------------------------------------------------------|
+| `dicom-api`          | FastAPI app                                             |
+| `dicom-worker`       | Celery worker — DICOM ingestion (`default` queue)       |
+| `dicom-pixel-worker` | Celery worker — filters + segmentation (`pixels` queue) |
+| `dicom-postgres`     | PostgreSQL 16                                           |
+| `dicom-pgbouncer`    | Connection pooler (app connects through this)           |
+| `dicom-redis`        | Celery broker, WS tickets, pixel-job state              |
+| `dicom-minio`        | Object storage (`dicom-files`, `thumbnails` buckets)    |
+| `dicom-pgadmin`      | Optional DB UI on :5050                                 |
+
+The two Celery workers are deliberately separate: a segmentation run of tens of
+seconds must not queue in front of a DICOM upload.
+
+### 2. Viewer
+
+```bash
+cd ../DICOM-viewer
+docker compose up -d --build          # http://localhost:4200
+```
+
+Log in with the `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` you seeded.
+
+### 3. Verify
+
+```bash
+curl http://localhost:8000/api/v1/health/ready
+docker compose logs -f api worker pixel-worker
+```
+
+Open http://localhost:8000/api/docs for the live API reference.
+
+### Stopping
+
+```bash
+make down                     # keep data
+docker compose down -v        # wipe postgres + minio volumes
+```
+
+### Tuning knobs
+
+All optional — the defaults work out of the box.
+
+| Variable                           | Default   | What it does                                                              |
+|------------------------------------|-----------|---------------------------------------------------------------------------|
+| `UVICORN_WORKERS`                  | `2`       | API processes. Each carries its own torch runtime (~1–1.5 GB resident)    |
+| `TORCH_NUM_THREADS`                | `0`       | `0` = torch's default. Set to the container's real vCPU quota             |
+| `DEEP_SEGMENTATION_DEVICE`         | `auto`    | `auto` / `cpu` / `cuda`                                                   |
+| `DEEP_SEGMENTATION_PRELOAD_MODELS` | *(empty)* | Comma-separated checkpoints loaded at boot so the first request is fast   |
+| `CELERY_PIXEL_QUEUE`               | `pixels`  | Queue served by `dicom-pixel-worker`                                      |
+
+### Troubleshooting
+
+| Symptom                                    | Cause and fix                                                                                     |
+|--------------------------------------------|---------------------------------------------------------------------------------------------------|
+| First segmentation takes 10–30 s extra      | Cold start: torch import + checkpoint download. Set `DEEP_SEGMENTATION_PRELOAD_MODELS`             |
+| `make gpu-check` says `resolved: cpu`       | Either no GPU passed through or a CPU-only torch build. `make up-gpu` rebuilds against CUDA wheels |
+| Filter/segmentation never returns           | Check `docker compose logs pixel-worker` — the job runs there, not in the API                     |
+| Upload stuck on "Processing on server 0 / N" | The ingestion worker is down. `docker compose ps` — `dicom-worker` must be up and healthy; `docker compose up -d worker` restarts it. Queued tasks drain as soon as it returns |
+| `PermissionError` on the checkpoint cache   | Stale root-owned volume: `docker volume rm dicom-platform_model-cache`, then `make up`             |

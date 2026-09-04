@@ -150,11 +150,43 @@ services:
     image: dicom-server:latest
     container_name: dicom-worker
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "${CELERY_TASK_DEFAULT_QUEUE:-default}"]
     env_file:
       - .env
     volumes:
       - .:/app
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$$HOSTNAME --timeout 10 || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - api
+      - redis
+      - postgres
+    networks:
+      - backend
+
+  # Pixel work (filters + segmentation) runs here, not on the ingestion worker:
+  # concurrency 1 so a loaded checkpoint is paid for once per process, and a
+  # 30 s inference never queues in front of a DICOM upload.
+  pixel-worker:
+    image: dicom-server:latest
+    container_name: dicom-pixel-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "${CELERY_PIXEL_QUEUE:-pixels}", "-n", "pixels@%h"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - model-cache:${DEEP_SEGMENTATION_MODEL_CACHE_DIR:-/var/cache/medical-std/models}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d pixels@$$HOSTNAME --timeout 10 || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
     depends_on:
       - api
       - redis

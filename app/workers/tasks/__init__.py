@@ -5,3 +5,4 @@ Add new task modules here and they will be auto-discovered by
 """
 
 from app.workers.tasks import ingest as ingest
+from app.workers.tasks import processing as processing

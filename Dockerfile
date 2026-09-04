@@ -22,14 +22,20 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY pyproject.toml README.md ./
+# CPU wheels by default; the GPU overlay (docker-compose.gpu.yml) overrides
+# this with a CUDA index, e.g. https://download.pytorch.org/whl/cu128.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 # torch AND torchvision must come from the same index: installing only torch
 # from the CPU index leaves torchvision to resolve from PyPI, and the resulting
 # CUDA-variant build cannot register its C++ ops against a +cpu torch
 # ("operator torchvision::nms does not exist" the moment smp/timm import it).
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
-    && pip install "."
-
+# The project install pins its own index: a bare `pip install .` after the
+# torch step inherits whatever index state that step left behind, and the
+# PyTorch wheel index serves none of the ordinary dependencies ("no version
+# satisfies sqlalchemy>=2.0.36 (from versions: none)").
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install torch torchvision --index-url "${TORCH_INDEX_URL}" \
+    && python -m pip install --index-url https://pypi.org/simple .
 # --- Dev stage: builder + dev extras (ruff, black, mypy, pytest). ----------
 # Used by `docker compose run --rm tools ...` for local lint/type/test runs.
 FROM builder AS dev
@@ -70,5 +76,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://localhost:8000/api/v1/health/live || exit 1
 
-# Default command runs the API. Compose overrides it for the worker.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command runs the API. Compose overrides it for the worker, and
+# scripts/start-api.sh (migrations first) is the managed-platform entrypoint.
+# Shell form so UVICORN_WORKERS expands: a single process serialised all pixel
+# work platform-wide — see 0.2 in possible_fixes.md.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${API_PORT:-8000} --workers ${UVICORN_WORKERS:-2}"]

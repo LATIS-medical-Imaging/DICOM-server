@@ -3,7 +3,8 @@
 A *phase* is a series row with ``parent_series_id`` set: a named snapshot of
 the modifications (server-filtered pixels, annotations) a doctor saved against
 the original series.  The render-time view of a phase is the union of the
-parent's instances with the phase's overrides spliced in by ``instance_number``.
+parent's instances with the phase's overrides spliced in by
+``parent_instance_id``.
 
 Wire format mirrors the rest of the API: snake_case throughout, ``UUID`` for
 ids, ``model_config = {"from_attributes": True}`` for ORM compatibility.
@@ -146,8 +147,8 @@ class PhaseListResponse(BaseModel):
 class PhaseResponse(BaseModel):
     """Full phase payload returned by GET /phases/{id}, POST, and PATCH.
 
-    ``instances`` is the **merged** stack (parent + phase overrides, ordered
-    by ``instance_number``) so the viewer can call ``viewport.setStack``
+    ``instances`` is the **merged** stack (parent + phase overrides spliced in
+    by ``parent_instance_id``) so the viewer can call ``viewport.setStack``
     without any client-side splicing.  ``annotations`` is the flat list of
     all annotations belonging to this phase, keyed off ``instance_id``
     (which points at phase-owned Instance rows in the merged list).

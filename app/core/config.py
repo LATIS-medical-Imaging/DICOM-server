@@ -120,7 +120,20 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     deep_segmentation_model_server_url: str = "http://mcdmodels.ptm.tn:555/"
     deep_segmentation_model_cache_dir: str = "/var/cache/medical-std/models"
-    deep_segmentation_device: str = "cpu"
+    # "auto" resolves to cuda when the container has a GPU *and* a CUDA torch
+    # build, else cpu. Set explicitly to pin. See app/core/torch_runtime.py.
+    deep_segmentation_device: str = "auto"
+
+    # ------------------------------------------------------------------
+    # Torch runtime
+    # ------------------------------------------------------------------
+    # Torch sizes its CPU thread pool from the host's core count, not the
+    # container's cgroup quota — oversubscription makes filters slower, not
+    # faster. 0 leaves torch's own default in place.
+    torch_num_threads: int = 0
+    # Checkpoints to load during startup so the first user doesn't pay the
+    # download plus torch.load. Comma-separated; empty disables preloading.
+    deep_segmentation_preload_models: str = ""
 
     # ------------------------------------------------------------------
     # Celery
@@ -130,6 +143,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = ""
     celery_result_backend: str = ""
     celery_task_default_queue: str = "default"
+    # Filters and segmentation are routed here, served by a separate worker so
+    # a long inference never queues in front of DICOM ingestion.
+    celery_pixel_queue: str = "pixels"
 
     # ------------------------------------------------------------------
     # Uploads

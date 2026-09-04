@@ -131,8 +131,18 @@ class ShareSourceDto(BaseModel):
 # from chat.py).  Now that both modules are loaded, rebuild the model so
 # Pydantic can resolve the annotation.
 from app.schemas.chat import MessageResponse  # noqa: E402
-from app.schemas.studies import SeriesResponse, StudyResponse  # noqa: E402
+from app.schemas.studies import (  # noqa: E402
+    SeriesResponse,
+    StudyResponse,
+    ViewerSeriesResponse,
+    ViewerStudyResponse,
+)
 
 MessageResponse.model_rebuild()
 StudyResponse.model_rebuild()
 SeriesResponse.model_rebuild()
+# Subclasses inherit the unresolved `share_source` annotation and carry their own
+# namespace, so rebuilding the bases is not enough — without these two, OpenAPI
+# generation raises PydanticUserError and `/api/docs` 500s.
+ViewerStudyResponse.model_rebuild()
+ViewerSeriesResponse.model_rebuild()

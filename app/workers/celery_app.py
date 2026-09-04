@@ -28,6 +28,13 @@ celery_app.conf.update(
     enable_utc=True,
     result_expires=3600,
     broker_connection_retry_on_startup=True,
+    # Pixel work goes to its own queue served by its own worker: a 30 s
+    # inference must not sit in front of DICOM ingestion, and that worker wants
+    # concurrency 1 so a loaded checkpoint is paid for once per process.
+    task_routes={
+        "workers.apply_filter": {"queue": settings.celery_pixel_queue},
+        "workers.apply_segmentation": {"queue": settings.celery_pixel_queue},
+    },
 )
 
 

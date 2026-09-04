@@ -16,6 +16,7 @@ import pytest
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+from app.core.timing import StageTimer
 from app.schemas.processing import ROI
 from app.services import segmentation_service as seg
 from app.services.segmentation_service import SegmentationService, _offset_annotation
@@ -94,10 +95,15 @@ class _StubAlgorithm:
         return out
 
 
+def _timer() -> StageTimer:
+    return StageTimer("segmentation-test")
+
+
 class _StubSettings:
     deep_segmentation_model_server_url = "http://models.invalid/"
     deep_segmentation_model_cache_dir = "/tmp/models"
     deep_segmentation_device = "cpu"
+    torch_num_threads = 0
 
 
 @pytest.fixture
@@ -132,7 +138,9 @@ def source_dicom() -> bytes:
 def test_mask_is_written_as_an_uncompressed_derived_dicom(
     service: SegmentationService, source_dicom: bytes
 ) -> None:
-    out_bytes, count, annotations = service._run_segmentation(source_dicom, MODEL, None, None, None)
+    out_bytes, count, annotations, _mask = service._run_segmentation(
+        source_dicom, MODEL, None, None, None, _timer()
+    )
     ds = pydicom.dcmread(io.BytesIO(out_bytes))
 
     assert ds.file_meta.TransferSyntaxUID == ExplicitVRLittleEndian
@@ -153,7 +161,9 @@ def test_roi_pastes_the_mask_back_and_shifts_coordinates(
     service: SegmentationService, source_dicom: bytes
 ) -> None:
     roi = ROI(x=2, y=3, width=12, height=11)
-    out_bytes, count, annotations = service._run_segmentation(source_dicom, MODEL, None, None, roi)
+    out_bytes, count, annotations, _mask = service._run_segmentation(
+        source_dicom, MODEL, None, None, roi, _timer()
+    )
     arr = pydicom.dcmread(io.BytesIO(out_bytes)).pixel_array
 
     assert arr.shape == (16, 16)
@@ -173,7 +183,7 @@ def test_overrides_are_restored_on_the_shared_instance(
     svc = SegmentationService.__new__(SegmentationService)
     svc._settings = _StubSettings()  # type: ignore[assignment]
 
-    svc._run_segmentation(source_dicom, MODEL, 0.9, 64, None)
+    svc._run_segmentation(source_dicom, MODEL, 0.9, 64, None, _timer())
 
     assert stub.threshold == 0.5
     assert stub.min_lesion_area == 4
@@ -199,7 +209,7 @@ def test_multiframe_input_is_rejected_cleanly(service: SegmentationService) -> N
     ds.save_as(buf, write_like_original=False)
 
     with pytest.raises(FilterError, match="single-frame"):
-        service._run_segmentation(buf.getvalue(), MODEL, None, None, None)
+        service._run_segmentation(buf.getvalue(), MODEL, None, None, None, _timer())
 
 
 @pytest.mark.parametrize(

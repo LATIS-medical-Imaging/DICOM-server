@@ -37,6 +37,15 @@ class Instance(Base, UUIDPrimaryKeyMixin):
         nullable=False,
     )
 
+    # Set only on phase Instance rows: the parent-series slice this row
+    # overrides.  ``instance_number`` cannot serve as that link — it mirrors
+    # the DICOM tag and is NULL whenever the file omits it.
+    parent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instances.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
     sop_instance_uid: Mapped[str] = mapped_column(String(128), nullable=False)
     sop_class_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     instance_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -106,7 +106,7 @@ class PhaseService:
           ``StudyService.list_instances`` so the existing studies endpoint
           can route through this helper without behaviour change.
         * For a phase: returns the parent's instances with the phase's
-          overrides spliced in by ``instance_number``.
+          overrides spliced in by ``parent_instance_id``.
         """
         if series.parent_series_id is None:
             return await self._studies.list_instances(series.id)
@@ -115,18 +115,22 @@ class PhaseService:
         parent_instances = await self._studies.list_instances(series.parent_series_id)
         phase_instances = await self._studies.list_instances(series.id)
 
-        overrides: dict[int, Instance] = {
-            inst.instance_number: inst
-            for inst in phase_instances
-            if inst.instance_number is not None
-        }
+        overrides: dict[uuid.UUID, Instance] = {}
+        legacy_by_number: dict[int, Instance] = {}
+        for inst in phase_instances:
+            if inst.parent_instance_id is not None:
+                overrides[inst.parent_instance_id] = inst
+            elif inst.instance_number is not None:
+                # Rows saved before ``parent_instance_id`` existed that the
+                # 0007 backfill could not resolve.
+                legacy_by_number[inst.instance_number] = inst
+
         merged: list[Instance] = []
         for parent_inst in parent_instances:
-            number = parent_inst.instance_number
-            if number is not None and number in overrides:
-                merged.append(overrides[number])
-            else:
-                merged.append(parent_inst)
+            override = overrides.get(parent_inst.id)
+            if override is None and parent_inst.instance_number is not None:
+                override = legacy_by_number.get(parent_inst.instance_number)
+            merged.append(override or parent_inst)
         return merged
 
     async def list_phase_annotations(self, phase: Series) -> list[Annotation]:
@@ -354,7 +358,8 @@ class PhaseService:
         """Insert phase Instance rows + their annotations.
 
         Each phase Instance copies its parent's DICOM metadata verbatim (so the
-        merged stack is dimensionally consistent) and overrides ``file_path``
+        merged stack is dimensionally consistent), records which parent slice
+        it overrides in ``parent_instance_id``, and overrides ``file_path``
         when a derived blob was supplied.  ``sop_instance_uid`` is freshly
         generated — phases never reuse parent SOP UIDs since the rows live
         under the phase's own series.
@@ -363,6 +368,7 @@ class PhaseService:
             parent_inst = parent_instances_by_id[item.parent_instance_id]
             phase_inst = Instance(
                 series_id=phase.id,
+                parent_instance_id=parent_inst.id,
                 sop_instance_uid=pydicom.uid.generate_uid(),
                 sop_class_uid=parent_inst.sop_class_uid,
                 instance_number=parent_inst.instance_number,

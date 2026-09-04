@@ -114,3 +114,17 @@ class StorageService:
         finally:
             response.close()
             response.release_conn()
+
+    def get_object_bytes_or_none(self, bucket: str, key: str) -> bytes | None:
+        """Fetch an object, returning None when it isn't there.
+
+        Lets a cache probe be a single round-trip: a HEAD followed by a GET
+        pays two, and the answer to "does it exist" is already carried by the
+        GET's own 404.
+        """
+        try:
+            return self.get_object_bytes(bucket, key)
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchBucket"):
+                return None
+            raise

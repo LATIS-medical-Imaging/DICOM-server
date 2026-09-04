@@ -52,6 +52,8 @@ class ApplyFilterRequest(BaseModel):
 
 
 class ApplyFilterResponse(BaseModel):
+    """Returned with 200 on a cache hit — the result is ready to fetch."""
+
     download_url: str
     object_key: str
     filter: FilterName
@@ -102,6 +104,8 @@ class LesionAnnotation(BaseModel):
 
 
 class ApplySegmentationResponse(BaseModel):
+    """Returned with 200 on a cache hit — the result is ready to fetch."""
+
     download_url: str
     object_key: str
     model_name: str
@@ -109,3 +113,34 @@ class ApplySegmentationResponse(BaseModel):
     cached: bool
     lesion_count: int
     annotations: list[LesionAnnotation]
+    # Same mask as `download_url`, as a PNG of a few KB instead of a
+    # full-range uint16 DICOM of tens of MB. Null if the sidecar is missing
+    # (masks written before this existed).
+    mask_png_url: str | None = None
+
+
+class PixelJobStatus(BaseModel):
+    """State of a queued filter/segmentation job.
+
+    Both apply endpoints answer 202 with this when the result isn't cached; the
+    same shape comes back from `GET /processing/jobs/{job_id}` and, once
+    `status` is `completed`, carries the result fields the 200 response would
+    have carried.
+    """
+
+    job_id: str
+    kind: Literal["filter", "segmentation"]
+    status: Literal["queued", "running", "completed", "failed"]
+    stage: str | None = None
+    error: str | None = None
+
+    download_url: str | None = None
+    object_key: str | None = None
+    expires_in: int | None = None
+    cached: bool | None = None
+
+    filter: FilterName | None = None
+    model_name: str | None = None
+    lesion_count: int | None = None
+    annotations: list[LesionAnnotation] | None = None
+    mask_png_url: str | None = None

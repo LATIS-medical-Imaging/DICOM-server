@@ -41,6 +41,7 @@ class InstanceResponse(BaseModel):
 
     id: uuid.UUID
     series_id: uuid.UUID
+    parent_instance_id: uuid.UUID | None = None
     sop_instance_uid: str
     sop_class_uid: str | None
     instance_number: int | None

@@ -42,6 +42,8 @@ Annotations attach to phase-owned Instance rows via the existing `instance_id` F
 ### Per-instance handling
 A phase Instance row is created for every slice the doctor *touched* (filter applied OR annotation drawn).
 
+Every phase Instance row carries `parent_instance_id` — the parent slice it overrides. This is what the merge keys on. `instance_number` cannot serve that role: it mirrors the DICOM `InstanceNumber` tag, which is absent from plenty of real files, and a NULL on both sides means the override never matches and the saved result renders as the untouched parent.
+
 * Pixel-modified slices: `file_path` = derived MinIO key under `derived/`.
 * Annotation-only slices: `file_path` = same key as the parent's instance (zero bytes duplicated, just a row).
 
@@ -51,7 +53,7 @@ Each phase Instance gets a freshly-generated `sop_instance_uid` (via `pydicom.ui
 `PhaseService.list_instances_rendered(series)` is the single rendering helper:
 
 * For an original series → returns its instances ordered by `instance_number` (same as `StudyService.list_instances`).
-* For a phase → returns the parent's instances with the phase's overrides spliced in by matching `instance_number`. Same shape, frontend doesn't branch.
+* For a phase → returns the parent's instances with the phase's overrides spliced in by matching `parent_instance_id` (falling back to `instance_number` for rows saved before that column existed). Same shape, frontend doesn't branch.
 
 The studies endpoint `GET /studies/{}/series/{}/instances` routes through this helper, so the existing route serves both kinds of series transparently.
 
