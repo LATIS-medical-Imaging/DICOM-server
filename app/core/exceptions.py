@@ -8,6 +8,7 @@ never imports FastAPI.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -78,10 +79,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _handle_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)
+        # A custom ``model_validator`` puts the raw exception object in each
+        # entry's ``ctx``, which json.dumps cannot encode — without this the
+        # 422 became a 500 and the client learned nothing about the bad field.
+        details = jsonable_encoder(exc.errors())
         logger.warning(
             "request_validation_error",
             path=request.url.path,
-            errors=exc.errors(),
+            errors=details,
             request_id=request_id,
         )
         return JSONResponse(
@@ -90,7 +95,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "validation_error",
                     "message": "Invalid request payload.",
-                    "details": exc.errors(),
+                    "details": details,
                 },
                 "request_id": request_id,
             },

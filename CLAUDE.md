@@ -14,9 +14,7 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - Full Docker stack (api, worker, postgres, pgbouncer, redis, minio, minio-init, pgadmin)
 - GitHub Actions CI: lint → test → docker → security
 - `make ci` mirrors CI locally — all targets run in Docker, no local Python needed
-- Railway hosts api + worker + postgres + redis; Angular viewer on Cloudflare Pages
-- Cloudflare R2 replaces MinIO in production (S3-compatible, no code change beyond endpoint env vars)
-
+- I am going to host it manually on a virtual private server for now
 ### Database
 - Three Alembic migrations:
   - `0001_initial_schema` — all core ORM models (User, Patient, Study, Series, Instance, UploadJob, Share, etc.)
@@ -25,6 +23,7 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - `0004_series_phases` — adds `parent_series_id` (self-FK CASCADE) and `owner_id` (FK SET NULL) to `series` plus partial indexes; enables the Phases feature without any new tables
 - `0005_shares_messaging` · `0006_scope_dicom_uniqueness`
 - `0007_instance_parent_link` — adds `instances.parent_instance_id` (self-FK CASCADE, partial index) so a phase row records which parent slice it overrides; backfills the rows the old `instance_number` match could resolve
+- `0008_message_voice` — adds `messages.voice_object_key` / `voice_mime_type` / `voice_duration_ms` / `voice_size_bytes` plus a CHECK keeping the four all-null or all-set
 
 ### Authentication (`app/services/auth_service.py`, `app/api/v1/endpoints/auth.py`)
 - JWT (HS256) access tokens (15 min) + refresh tokens (7 days) via `app/core/security.py`
@@ -81,7 +80,7 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - Loaded checkpoints are cached **per worker process**, keyed by `model@device` (a load costs a download + `torch.load`; the device is in the key so a CUDA-OOM fallback can hold a CPU copy alongside the GPU one). `DEEP_SEGMENTATION_PRELOAD_MODELS` warms them at boot
 - Cache hits need more than the mask, so a `<derived-key>.json` sidecar holding `{lesion_count, annotations}` is written next to it and read back — identical request → `cached: true`, no re-inference
 - Inference runs on the `pixels` Celery worker. The service's async `apply_segmentation` still exists for inline callers and hops to `asyncio.to_thread`; the blocking core is `apply_to_key`, which takes a source object key so the task needs no second DB round-trip
-- A `<derived-key>.png` sidecar holds the mask as a few-KB PNG (`mask_png_url` in the response, null for masks computed before this existed). The full-range uint16 DICOM is still written and still what the viewer displays; the PNG and the lesion polygons are the cheap paths for when the overlay moves to a translucent second layer
+- A `<derived-key>.png` sidecar holds the mask as a few-KB PNG (`mask_png_url` in the response, null for masks computed before this existed). **This is now the viewer's primary path**: it composites the binary / heat-map / overlay display modes from the PNG plus the original slice, and only falls back to downloading the full-range uint16 DICOM when the sidecar is missing
 - Lesions are **not** written to the `annotations` table. They return in the response and are persisted only if the doctor saves a Phase, via the existing pipeline. No new migration
 - `app/services/derived_pixels.py` — the plumbing `ProcessingService` and `SegmentationService` share (`FilterError`, `load_instance`, `clamp_roi`, `rescale_to_dtype`, `DERIVED_PREFIX`)
 - Checkpoints persist across restarts via the `model-cache` named volume on the `api` service
@@ -90,6 +89,7 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - **Friendships** — `POST /friendships/invite`, `GET /friendships`, `POST /friendships/{id}/accept`, `DELETE /friendships/{id}` (reject / unfriend)
 - **Messages** — `POST /messages`, `GET /messages?with=<peer_id>` (auto mark-read, cursor-paginated), `GET /messages/conversations`, `GET /messages/unread-count`
 - **User search** — `GET /users/search?q=&limit=` returns active doctors only, excludes caller
+- **Voice messages** — `POST /messages/voice/presign` returns a presigned PUT into the `voice-messages` bucket (key `{sender_id}/{uuid4}.{ext}`); the browser uploads the recording directly, then `POST /messages` with `voice: {object_key, mime_type, duration_ms}` attaches it. `MessageResponse.voice` carries a presigned GET minted on every read. Audio bytes never pass through the API — same browser↔MinIO split as DICOM pixels. A voice note may carry a text caption or stand alone
 - **WebSocket gateway** — `WS /api/v1/ws/chat?ticket=<ticket>` (see WS ticket section below)
 - `ChatService` — all business logic; enforces friendship-gated messaging, canonical pair ordering for uniqueness
 - `WebSocketHub` (`app/services/ws_hub.py`) — `deliver()` publishes to the `ws:notifications` Redis channel; every process forwards what it reads there into its own `deliver_local()`, which writes to the sockets that process holds. This is what makes `UVICORN_WORKERS > 1` safe — a socket on worker 2 still receives what worker 1 sends. Falls back to local delivery if Redis is unreachable
@@ -109,9 +109,10 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 
 ## What's next
 
-- Overlay the segmentation mask as a translucent second Cornerstone layer instead of replacing the displayed image (v1 replaces it, like every other filter)
+- Stop writing the derived mask DICOM. The viewer composites its heat-map and overlay display modes client-side from the `.png` sidecar; the ~24 MB uint16 write is only still needed for the viewer's `result` mode and for masks a phase has already saved
 - Sweep orphaned `derived/` blobs (filter results and segmentation masks + their `.json` sidecars) left behind by deleted phases
-- Persist the applied filter on the `Instance` row so it reapplies on load (the "save filter" feature)
+- Sweep orphaned voice clips — a recording that was presigned and uploaded but never attached to a message keeps its bytes with nothing referencing them. Only the over-quota case is cleaned up today
+- Persist the applied filter on the `Instance` row so it reapplies on load (the "save filter" feature). The viewer now offers its three display modes on a re-opened phase too, but with nothing recording which algorithm produced a slice it can only label them "Saved result"
 - Unit and integration tests for `AuthService`, `ChatService`, `IngestionService`
 - **Precompute at ingestion** — chain the default segmentation model as a follow-on task after `ingest_dicom_instance`. Content-addressed keys mean the doctor's click then becomes a cache hit. The Celery pixel task it would chain to already exists
 - Drop the derived-DICOM write for segmentation masks once the viewer renders overlays from the polygons or `mask_png_url`
@@ -134,6 +135,8 @@ Stack: FastAPI · async SQLAlchemy 2.0 · PostgreSQL 16 · PgBouncer · MinIO ·
 - **`POST /processing/apply` and `/segmentation/apply` return 200 *or* 202** — a client that assumes 200-with-a-URL breaks the moment the result isn't cached. The viewer's `PixelJobService` hides this; anything else calling these endpoints must handle both
 - **Torch sizes its thread pool from the host's core count, not the container's cgroup quota.** On a 2-vCPU slice it spawns threads it cannot schedule and the request slows down. Set `TORCH_NUM_THREADS`
 - **A GPU on the host is not a GPU in the container.** Both a passed-through device *and* a CUDA torch build are required, and either missing silently yields CPU. `make gpu-check` reports what the container actually resolved
+- **A presigned PUT enforces no size limit.** MinIO will accept whatever the client sends, so any quota has to be checked *after* the upload with `stat_object` against the object that actually landed — a client-declared `size_bytes` is worth nothing. This is why `VoiceClipRef` has no size field
+- **`RequestValidationError.errors()` is not JSON-serializable when a custom `model_validator` raised.** Pydantic puts the raw exception object in each entry's `ctx`, and `json.dumps` then dies *inside the error handler* — turning every such 422 into a 500 with no usable message. The handler in `app/core/exceptions.py` runs `jsonable_encoder` over it first; the first custom validator in the codebase (`SendMessageRequest`) is what exposed this
 - Filter results live under `derived/` inside the same bucket as the source DICOM — never overwrite the source key
 - PgBouncer transaction pooling: DDL statements must target Postgres directly (port 5432), not PgBouncer (6432) — Alembic's `database_url_sync` is wired correctly for this
 - Concurrent DICOM ingestion of anonymous files (`patient_id='0'`) would previously race-insert the same patient row. Fixed in migration `0002` + `INSERT … ON CONFLICT DO NOTHING` in `IngestionService._upsert_patient`

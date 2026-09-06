@@ -19,7 +19,7 @@ done
 echo "    Connected."
 
 # Buckets 
-for BUCKET in dicom-files thumbnails; do
+for BUCKET in dicom-files thumbnails voice-messages; do
   if mc ls "$ALIAS/$BUCKET" > /dev/null 2>&1; then
     echo "==> Bucket '$BUCKET' already exists — skipping."
   else

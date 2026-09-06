@@ -9,6 +9,10 @@ When ``share_id`` is set the message is a *share attachment*: the chat bubble
 renders a card with study/series metadata + Import button.  ``body`` becomes
 the optional caption the sender wrote alongside the share.  When ``share_id``
 is NULL the message is a plain text bubble (the original behaviour).
+
+When ``voice_object_key`` is set the message is a *voice note*: the bubble
+renders an audio player fed by a presigned GET minted on read.  The audio bytes
+live in the ``voice-messages`` MinIO bucket and never touch Postgres.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +39,19 @@ class Message(Base, UUIDPrimaryKeyMixin):
             name="ck_messages_body_length",
         ),
         CheckConstraint("sender_id <> recipient_id", name="ck_messages_no_self_send"),
+        # A half-written voice note would render as a player with no source, so
+        # the four columns stand or fall together.
+        CheckConstraint(
+            "(voice_object_key IS NULL AND voice_mime_type IS NULL "
+            "AND voice_duration_ms IS NULL AND voice_size_bytes IS NULL) "
+            "OR (voice_object_key IS NOT NULL AND voice_mime_type IS NOT NULL "
+            "AND voice_duration_ms IS NOT NULL AND voice_size_bytes IS NOT NULL)",
+            name="ck_messages_voice_complete",
+        ),
+        CheckConstraint(
+            "voice_duration_ms IS NULL OR voice_duration_ms > 0",
+            name="ck_messages_voice_duration_positive",
+        ),
         Index("ix_messages_recipient_unread", "recipient_id", "read_at"),
         Index(
             "ix_messages_thread_sr",
@@ -68,6 +85,11 @@ class Message(Base, UUIDPrimaryKeyMixin):
         ForeignKey("shares.id", ondelete="CASCADE"),
         nullable=True,
     )
+    # Object key in the audio bucket; NULL for every non-voice message.
+    voice_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    voice_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    voice_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voice_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

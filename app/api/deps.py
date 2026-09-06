@@ -68,7 +68,7 @@ def require_role(role: str) -> Callable[..., Awaitable[User]]:
 
 
 def get_client_ip(request: Request) -> str | None:
-    """Best-effort client IP. Trusts ``X-Forwarded-For`` first hop (Railway/CF)."""
+    """Best-effort client IP. Trusts ``X-Forwarded-For`` first hop."""
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip() or None

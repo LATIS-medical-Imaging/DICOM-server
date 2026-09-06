@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 # Share schemas reference chat's UserSearchResult, so we can't import the
 # other way here — use a forward ref string annotation on MessageResponse.share
@@ -54,9 +54,64 @@ class FriendshipListResponse(BaseModel):
     items: list[FriendshipResponse]
 
 
+class VoiceClipUploadRequest(BaseModel):
+    """Ask for a slot to upload a recording into."""
+
+    mime_type: str = Field(..., max_length=100, description="Container the recorder produced.")
+
+
+class VoiceClipUploadResponse(BaseModel):
+    """Where to PUT the recording, and the key to quote back when sending."""
+
+    upload_url: str
+    object_key: str
+    bucket: str
+    expires_in: int
+
+
+class VoiceClipRef(BaseModel):
+    """A recording the client has already uploaded, referenced by object key.
+
+    ``size_bytes`` is deliberately absent: the server reads the real size back
+    from MinIO, because a presigned PUT enforces no length of its own and a
+    client-declared one would be the wrong thing to check a quota against.
+    """
+
+    object_key: str = Field(..., max_length=512)
+    mime_type: str = Field(..., max_length=100)
+    duration_ms: int = Field(..., gt=0)
+
+
+class VoiceClipDto(BaseModel):
+    """A voice note as the chat bubble receives it.
+
+    ``url`` is a presigned GET minted per read, so it expires with
+    ``minio_presigned_url_expire_seconds`` — a client holding a message list
+    open past that must refetch the thread rather than cache the URL.
+    """
+
+    url: str
+    mime_type: str
+    duration_ms: int
+    size_bytes: int
+
+
 class SendMessageRequest(BaseModel):
+    """Text bubble, voice note, or a voice note with a text caption.
+
+    ``body`` is optional only because a voice note may stand alone; a message
+    carrying neither is rejected.
+    """
+
     recipient_id: uuid.UUID
-    body: str = Field(..., min_length=1, max_length=4000)
+    body: str = Field(default="", max_length=4000)
+    voice: VoiceClipRef | None = None
+
+    @model_validator(mode="after")
+    def _require_content(self) -> SendMessageRequest:
+        if not self.body.strip() and self.voice is None:
+            raise ValueError("A message must have a body, a voice clip, or both.")
+        return self
 
 
 class MessageResponse(BaseModel):
@@ -64,7 +119,8 @@ class MessageResponse(BaseModel):
 
     When ``share`` is set the message is a share attachment (chat bubble
     renders a share card and ``body`` is an optional caption).  When
-    ``share`` is None the message is a plain text bubble.
+    ``voice`` is set it is a voice note (audio player, ``body`` again an
+    optional caption).  With both None the message is a plain text bubble.
     """
 
     model_config = {"from_attributes": True}
@@ -78,6 +134,7 @@ class MessageResponse(BaseModel):
     # Forward ref — resolved by ``ShareEmbeddedDto.model_rebuild`` call at the
     # bottom of ``app/schemas/shares.py``.
     share: ShareEmbeddedDto | None = None
+    voice: VoiceClipDto | None = None
 
 
 class MessageListResponse(BaseModel):

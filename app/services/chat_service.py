@@ -15,6 +15,7 @@ notification for a write that's not yet durable.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, time
 from typing import Literal
@@ -22,7 +23,13 @@ from typing import Literal
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError, PermissionDeniedError
+from app.core.config import Settings
+from app.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from app.db.models.friendship import Friendship, FriendshipStatus
 from app.db.models.message import Message
 from app.db.models.series import Series
@@ -34,9 +41,31 @@ from app.schemas.chat import (
     FriendshipResponse,
     MessageResponse,
     UserSearchResult,
+    VoiceClipDto,
+    VoiceClipRef,
+    VoiceClipUploadResponse,
 )
 from app.schemas.shares import ShareEmbeddedDto, ShareTargetSummary
+from app.services.storage_service import StorageService
 from app.services.ws_hub import WebSocketHub
+
+# Containers a browser's MediaRecorder actually produces, mapped to the
+# extension the object key gets.  Chrome records webm/opus, Safari mp4/aac; the
+# rest are here so a client that transcodes before upload still works.
+VOICE_MIME_EXTENSIONS: dict[str, str] = {
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/mpeg": "mp3",
+    "audio/aac": "aac",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
+
+
+def _normalise_audio_mime(mime_type: str) -> str:
+    """Drop the codecs parameter — recorders emit ``audio/webm;codecs=opus``."""
+    return mime_type.split(";")[0].strip().lower()
 
 
 def _canonical_pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
@@ -45,9 +74,17 @@ def _canonical_pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
 
 
 class ChatService:
-    def __init__(self, db: AsyncSession, hub: WebSocketHub) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        hub: WebSocketHub,
+        storage: StorageService,
+        settings: Settings,
+    ) -> None:
         self._db = db
         self._hub = hub
+        self._storage = storage
+        self._settings = settings
 
     # ------------------------------------------------------------------
     # Search
@@ -251,26 +288,70 @@ class ChatService:
     # ------------------------------------------------------------------
     # Messages
     # ------------------------------------------------------------------
+    async def create_voice_upload(
+        self,
+        current_user_id: uuid.UUID,
+        mime_type: str,
+    ) -> VoiceClipUploadResponse:
+        """Mint a presigned PUT for one recording.
+
+        The key is minted here rather than accepted from the client so it always
+        lands under the caller's own prefix — that prefix is what
+        :meth:`_resolve_voice_clip` later checks to stop one doctor attaching
+        another's recording to their message.
+        """
+        extension = VOICE_MIME_EXTENSIONS.get(_normalise_audio_mime(mime_type))
+        if extension is None:
+            raise ValidationError(f"Unsupported audio format '{mime_type}'.")
+
+        bucket = self._settings.minio_bucket_audio
+        key = self._storage.voice_object_key(
+            sender_id=str(current_user_id),
+            clip_id=uuid.uuid4().hex,
+            extension=extension,
+        )
+        expires = self._settings.minio_presigned_url_expire_seconds
+        upload_url = await asyncio.to_thread(self._storage.presigned_put_url, bucket, key, expires)
+        return VoiceClipUploadResponse(
+            upload_url=upload_url,
+            object_key=key,
+            bucket=bucket,
+            expires_in=expires,
+        )
+
     async def send_message(
         self,
         current_user_id: uuid.UUID,
         recipient_id: uuid.UUID,
         body: str,
+        voice: VoiceClipRef | None = None,
     ) -> MessageResponse:
         if current_user_id == recipient_id:
             raise PermissionDeniedError("You cannot message yourself.")
         await self._require_accepted_friendship(current_user_id, recipient_id)
 
+        # Resolved before the insert: a row pointing at a blob that was never
+        # uploaded would render as a player that 404s, with no way back.
+        mime_type, size_bytes = (
+            await self._resolve_voice_clip(current_user_id, voice)
+            if voice is not None
+            else (None, None)
+        )
+
         message = Message(
             sender_id=current_user_id,
             recipient_id=recipient_id,
             body=body,
+            voice_object_key=voice.object_key if voice else None,
+            voice_mime_type=mime_type,
+            voice_duration_ms=voice.duration_ms if voice else None,
+            voice_size_bytes=size_bytes,
         )
         self._db.add(message)
         await self._db.commit()
         await self._db.refresh(message)
 
-        response = MessageResponse.model_validate(message)
+        response = await self._message_to_response(message)
         envelope = {"type": "message.new", "data": response.model_dump(mode="json")}
 
         # Echo to the sender's other tabs *and* push to the recipient.
@@ -432,6 +513,61 @@ class ChatService:
             raise PermissionDeniedError("You can only message accepted friends.")
         return friendship
 
+    async def _resolve_voice_clip(
+        self,
+        current_user_id: uuid.UUID,
+        voice: VoiceClipRef,
+    ) -> tuple[str, int]:
+        """Validate an uploaded recording and return its mime type and real size.
+
+        The size comes from MinIO, not from the client: a presigned PUT imposes
+        no length limit of its own, so the only honest moment to enforce the
+        quota is after the bytes have landed.
+        """
+        mime_type = _normalise_audio_mime(voice.mime_type)
+        if mime_type not in VOICE_MIME_EXTENSIONS:
+            raise ValidationError(f"Unsupported audio format '{voice.mime_type}'.")
+        if voice.duration_ms > self._settings.voice_message_max_duration_ms:
+            limit_s = self._settings.voice_message_max_duration_ms // 1000
+            raise ValidationError(f"Voice messages are limited to {limit_s} seconds.")
+        if not voice.object_key.startswith(f"{current_user_id}/"):
+            raise PermissionDeniedError("That recording does not belong to you.")
+
+        bucket = self._settings.minio_bucket_audio
+        size = await asyncio.to_thread(self._storage.object_size, bucket, voice.object_key)
+        if size is None:
+            raise NotFoundError("The recording was not uploaded.")
+        if size == 0:
+            raise ValidationError("The recording is empty.")
+        if size > self._settings.voice_message_max_bytes:
+            # Over-quota bytes are of no use to anyone and nothing else will ever
+            # reference this key, so drop them rather than leave them orphaned.
+            await asyncio.to_thread(self._storage.remove_object, bucket, voice.object_key)
+            limit_mb = self._settings.voice_message_max_bytes // (1024 * 1024)
+            raise ValidationError(f"Voice messages are limited to {limit_mb} MB.")
+        return mime_type, size
+
+    def _voice_to_dto(self, message: Message) -> VoiceClipDto | None:
+        if (
+            message.voice_object_key is None
+            or message.voice_mime_type is None
+            or message.voice_duration_ms is None
+            or message.voice_size_bytes is None
+        ):
+            return None
+        # Pure local HMAC signing — no round-trip, so this is safe to do inline
+        # for every row of a listed thread.
+        url = self._storage.presigned_get_url(
+            self._settings.minio_bucket_audio,
+            message.voice_object_key,
+        )
+        return VoiceClipDto(
+            url=url,
+            mime_type=message.voice_mime_type,
+            duration_ms=message.voice_duration_ms,
+            size_bytes=message.voice_size_bytes,
+        )
+
     async def _message_to_response(self, message: Message) -> MessageResponse:
         """Materialise a Message ORM row into a wire response with the share
         DTO embedded when ``share_id`` is set.
@@ -440,8 +576,10 @@ class ChatService:
         this automatically: the embedded ``ShareEmbeddedDto`` carries a
         joined ``grantor: UserSearchResult`` and a built-up
         ``target: ShareTargetSummary`` that don't live as attributes on the
-        Share ORM object.
+        Share ORM object, and a voice note needs a freshly presigned URL
+        rather than the stored object key.
         """
+        voice = self._voice_to_dto(message)
         if message.share_id is None or message.share is None:
             return MessageResponse(
                 id=message.id,
@@ -451,6 +589,7 @@ class ChatService:
                 sent_at=message.sent_at,
                 read_at=message.read_at,
                 share=None,
+                voice=voice,
             )
 
         share = message.share
@@ -479,6 +618,7 @@ class ChatService:
             sent_at=message.sent_at,
             read_at=message.read_at,
             share=embedded,
+            voice=voice,
         )
 
     async def _build_target_summary(self, share: Share) -> ShareTargetSummary:

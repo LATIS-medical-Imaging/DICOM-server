@@ -98,6 +98,19 @@ The ticket carries no information and is single-use; a stolen log entry is alrea
 - Protected by `asyncio.Lock()` to prevent concurrent dict mutations
 - Currently **in-process** (single API replica). For horizontal scaling, wrap `deliver` in a Redis pub/sub bridge — the `register`/`unregister`/`deliver` interface is designed so callers won't change
 
+### Voice messages
+Audio follows the same split as DICOM pixels: **bytes go browser↔MinIO directly, only metadata touches Postgres.**
+
+1. `POST /messages/voice/presign` with the recorder's `mime_type` → a presigned PUT plus the `object_key` to quote back. The key is `{sender_id}/{uuid4}.{ext}` in the `voice-messages` bucket
+2. Browser PUTs the recording straight to MinIO — the API never sees the bytes
+3. `POST /messages` with `voice: {object_key, mime_type, duration_ms}` → the Message row is written and pushed over the WebSocket
+
+The sender's id is the **first path segment** of the key so `_resolve_voice_clip` can reject another user's key by prefix, without a lookup. Size is read back from MinIO with `stat_object` rather than taken from the client: a presigned PUT carries no length limit of its own, so the moment the bytes have landed is the only honest place to enforce the quota (`voice_message_max_bytes`, default 10 MB). An over-quota object is deleted rather than left orphaned.
+
+`MessageResponse.voice.url` is a presigned GET **minted per read**, never stored — it expires with `minio_presigned_url_expire_seconds`, so a client holding a thread open past that must refetch rather than cache the URL. The four `messages.voice_*` columns are covered by a CHECK that keeps them all-null or all-set; a half-written row would render as an audio player with no source.
+
+Voice notes reuse the `message.new` envelope, so the chat reducer needs no new branch — same choice the share-card bubbles made.
+
 ### Friendship model
 - Single `friendships` table, status-driven: `pending` → `accepted`; delete = reject or unfriend
 - Canonical ordering: `user_a_id < user_b_id` enforced by a CHECK constraint and a `UNIQUE(user_a_id, user_b_id)` — uniqueness holds regardless of who initiated

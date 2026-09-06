@@ -1,5 +1,5 @@
 #!/bin/sh
-# Entrypoint for the API service on managed platforms (Railway, Render, etc.).
+# Entrypoint for the API service on managed platforms
 # Runs Alembic migrations to head before starting the server so the schema
 # is always in sync with the deployed code.
 set -e
@@ -17,7 +17,6 @@ echo "==> Starting API server"
 # --workers and --reload are mutually exclusive; compose overrides this command
 # for local development.
 #
-# Railway injects $PORT; fall back to 8000 for other platforms.
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port "${PORT:-8000}" \

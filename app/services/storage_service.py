@@ -43,6 +43,7 @@ class StorageService:
         for bucket in (
             self._settings.minio_bucket_dicom,
             self._settings.minio_bucket_thumbnails,
+            self._settings.minio_bucket_audio,
         ):
             try:
                 if not self.client.bucket_exists(bucket):
@@ -64,6 +65,15 @@ class StorageService:
     ) -> str:
         """`{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm` — matches the architecture."""
         return f"{owner_id}/{study_uid}/{series_uid}/{sop_uid}.dcm"
+
+    @staticmethod
+    def voice_object_key(sender_id: str, clip_id: str, extension: str) -> str:
+        """`{sender_id}/{clip_id}.{ext}` in the audio bucket.
+
+        The sender's id is the first segment so a send can prove ownership of a
+        client-supplied key by prefix alone, without a second round-trip.
+        """
+        return f"{sender_id}/{clip_id}.{extension}"
 
     # ------------------------------------------------------------------
     # Pre-signed URLs (browser ↔ MinIO direct I/O)
@@ -105,6 +115,13 @@ class StorageService:
             return True
         except S3Error:
             return False
+
+    def object_size(self, bucket: str, key: str) -> int | None:
+        """Size in bytes of a stored object, or None when it isn't there."""
+        try:
+            return int(self.client.stat_object(bucket, key).size or 0)
+        except S3Error:
+            return None
 
     def get_object_bytes(self, bucket: str, key: str) -> bytes:
         """Fetch the full object content as bytes (server-side, e.g. processing pipeline)."""

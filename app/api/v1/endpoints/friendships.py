@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, SettingsDep, StorageDep
 from app.schemas.chat import (
     FriendshipListResponse,
     FriendshipResponse,
@@ -28,8 +28,10 @@ async def invite(
     body: InviteRequest,
     user: CurrentUser,
     db: DBSession,
+    storage: StorageDep,
+    settings: SettingsDep,
 ) -> FriendshipResponse:
-    service = ChatService(db, get_ws_hub())
+    service = ChatService(db, get_ws_hub(), storage, settings)
     return await service.invite(user.id, body.user_id)
 
 
@@ -37,6 +39,8 @@ async def invite(
 async def list_friendships(
     user: CurrentUser,
     db: DBSession,
+    storage: StorageDep,
+    settings: SettingsDep,
     status: Literal["pending", "accepted"] = Query("accepted"),
     q: str | None = Query(default=None, description="Search peer by name or email"),
     limit: int = Query(default=100, ge=1, le=200),
@@ -48,7 +52,7 @@ async def list_friendships(
     ``limit`` + ``offset`` to paginate; chat overview calls this without
     those params to get the full accepted-friends list.
     """
-    service = ChatService(db, get_ws_hub())
+    service = ChatService(db, get_ws_hub(), storage, settings)
     items = await service.list_friendships(user.id, status, q=q, limit=limit, offset=offset)
     return FriendshipListResponse(items=items)
 
@@ -58,8 +62,10 @@ async def accept(
     friendship_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
+    storage: StorageDep,
+    settings: SettingsDep,
 ) -> FriendshipResponse:
-    service = ChatService(db, get_ws_hub())
+    service = ChatService(db, get_ws_hub(), storage, settings)
     return await service.accept(user.id, friendship_id)
 
 
@@ -68,8 +74,10 @@ async def delete_friendship(
     friendship_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
+    storage: StorageDep,
+    settings: SettingsDep,
 ) -> None:
     """Reject a pending invitation (recipient only) or unfriend an accepted
     friend (either party)."""
-    service = ChatService(db, get_ws_hub())
+    service = ChatService(db, get_ws_hub(), storage, settings)
     await service.delete_friendship(user.id, friendship_id)

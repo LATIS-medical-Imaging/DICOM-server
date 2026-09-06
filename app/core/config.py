@@ -57,8 +57,6 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------
     # Database
-    # Accepts Railway's native PG* vars (PGHOST, PGPORT, …) as aliases so
-    # no manual variable references are needed in the Railway dashboard.
     # ------------------------------------------------------------------
     postgres_user: str = Field(
         default="dicom",
@@ -87,7 +85,6 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------
     # Redis
-    # Accepts Railway's native REDIS* vars as aliases.
     # ------------------------------------------------------------------
     redis_host: str = Field(
         default="redis",
@@ -113,7 +110,14 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_bucket_dicom: str = "dicom-files"
     minio_bucket_thumbnails: str = "thumbnails"
+    minio_bucket_audio: str = "voice-messages"
     minio_presigned_url_expire_seconds: int = 3600
+
+    # Voice messages. The size cap is enforced server-side against the object
+    # MinIO actually stored — a presigned PUT carries no length limit of its
+    # own, so a client-declared size cannot be trusted.
+    voice_message_max_bytes: int = 10 * 1024 * 1024
+    voice_message_max_duration_ms: int = 5 * 60 * 1000
 
     # ------------------------------------------------------------------
     # Deep segmentation (medical-image-std DeepSegmentationAlgorithm)
@@ -139,7 +143,7 @@ class Settings(BaseSettings):
     # Celery
     # ------------------------------------------------------------------
     # When not explicitly set, these are derived from REDIS_HOST/PORT so that
-    # managed Redis services (Render, Railway, etc.) only need those two vars.
+    # managed Redis services only need those two vars.
     celery_broker_url: str = ""
     celery_result_backend: str = ""
     celery_task_default_queue: str = "default"
@@ -166,7 +170,7 @@ class Settings(BaseSettings):
     def _derive_celery_urls(self) -> Settings:
         """Build Celery broker/backend URLs from Redis connection settings.
 
-        Allows managed Redis services (Render, Railway, …) to supply only
+        Allows managed Redis services  to supply only
         REDIS_HOST and REDIS_PORT without needing a full composed URL.
         Explicit CELERY_BROKER_URL / CELERY_RESULT_BACKEND env vars take
         precedence when set (e.g. local dev via .env).
